@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "id": "arduino-accessories",
+  "name": "Accesorios Arduino/ESP32",
+  "version": "1.0.0",
+  "publisher": "NOPAL Labs",
+  "category": "Accesorios",
+  "description": "Controla relés y tiras LED conectadas a una placa Arduino/ESP32 propia, sin depender de enchufes WiFi de terceros.",
+  "permissions": ["Detectar puertos USB", "Enviar comandos a la placa", "Flashear firmware por USB u OTA"],
+  "compatibility": ["Impresión 3D", "Láser", "CNC"],
+  "frontend": {
+    "script": "frontend/arduino-accessories.js",
+    "style": "frontend/arduino-accessories.css",
+    "section": "arduino-accessories"
+  },
+  "backend": {
+    "entry": "backend/router.py"
+  }
+}

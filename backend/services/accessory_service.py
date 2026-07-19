@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import threading
 import time
 import uuid
 from typing import Any, Dict, List, Optional
@@ -142,6 +143,39 @@ def _relay_set_state(config: Dict[str, Any], on: bool) -> bool:
 
 _arduino_connections: Dict[str, Any] = {}
 
+# Un lock por puerto físico -- TODO el tráfico serie hacia el mismo device
+# (comandos de encendido/apagado y lecturas de estado a través de la
+# conexión persistente, y el handshake NOPAL:ID? del descubrimiento) tiene
+# que pasar por acá antes de escribir/leer nada. Sin esto, el escaneo de
+# descubrimiento (que el frontend dispara en cada refreshAll(), incluido
+# justo después de todo power toggle -- ver arduino-accessories.js,
+# togglePower()) puede abrir una segunda conexión cruda al mismo puerto
+# MIENTRAS la conexión persistente está a mitad de un comando. Confirmado
+# contra una placa real durante el debug de este bug: un probeo de
+# descubrimiento concurrente (su propio serial.Serial() sobre el mismo
+# device) se quedó con una respuesta "ON" que en realidad era la
+# contestación pendiente de OTRA consulta de estado en curso por la
+# conexión persistente -- dos lectores compitiendo por los mismos bytes que
+# llegan de la placa, cada uno se queda con lo que alcanza a leer primero,
+# sin ninguna garantía de que sea la respuesta a SU propio comando. Eso deja
+# a ambos lados con respuestas cruzadas o truncadas: el que pidió
+# "R1:ON" puede no recibir nunca su "OK" (aunque el firmware sí haya
+# ejecutado el comando), y viceversa -- exactamente el síntoma reportado
+# ("el badge cambia pero el relé no responde" es la cara visible de un
+# "OK"/estado que en realidad le llegó a otro lector, o de un comando que le
+# llegó al firmware entreverado con el de otro escritor concurrente).
+_arduino_locks: Dict[str, threading.Lock] = {}
+_arduino_locks_guard = threading.Lock()
+
+
+def _get_arduino_lock(device: str) -> threading.Lock:
+    with _arduino_locks_guard:
+        lock = _arduino_locks.get(device)
+        if lock is None:
+            lock = threading.Lock()
+            _arduino_locks[device] = lock
+        return lock
+
 
 def _resolve_arduino_device(config: Dict[str, Any]) -> Optional[str]:
     """Ubicación física primero (estable entre reinicios/replugs, mismo
@@ -177,20 +211,27 @@ def _arduino_send_command(config: Dict[str, Any], command: str) -> Optional[str]
     device = _resolve_arduino_device(config)
     if not device:
         return None
-    try:
-        ser = _open_arduino_connection(device)
-        ser.reset_input_buffer()
-        ser.write(f"{command}\n".encode("utf-8"))
-        raw = ser.readline()
-    except Exception as e:
-        logger.warning(f"[{device}] Fallo al hablar con la placa NOPAL: {e}")
-        old = _arduino_connections.pop(device, None)
-        if old is not None:
-            try:
-                old.close()
-            except Exception:
-                pass
-        return None
+    # Todo el intercambio (abrir/reusar la conexión, limpiar el buffer,
+    # escribir, leer la respuesta) queda protegido por el lock del puerto --
+    # ver _get_arduino_lock. Si se soltara el lock entre pasos, un probeo de
+    # descubrimiento concurrente podría colarse justo entre el write() y el
+    # readline() y quedarse con la respuesta que le corresponde a este
+    # comando.
+    with _get_arduino_lock(device):
+        try:
+            ser = _open_arduino_connection(device)
+            ser.reset_input_buffer()
+            ser.write(f"{command}\n".encode("utf-8"))
+            raw = ser.readline()
+        except Exception as e:
+            logger.warning(f"[{device}] Fallo al hablar con la placa NOPAL: {e}")
+            old = _arduino_connections.pop(device, None)
+            if old is not None:
+                try:
+                    old.close()
+                except Exception:
+                    pass
+            return None
     return raw.decode("utf-8", errors="ignore").strip() or None
 
 
@@ -200,13 +241,16 @@ def release_arduino_connection(device: str) -> None:
     antes de invocar esptool: éste necesita control exclusivo del puerto
     para flashear, así que hay que soltarlo antes — y no se debe volver a
     abrir hasta que el flasheo termine (nadie más llama a
-    _open_arduino_connection mientras tanto)."""
-    ser = _arduino_connections.pop(device, None)
-    if ser is not None:
-        try:
-            ser.close()
-        except Exception:
-            pass
+    _open_arduino_connection mientras tanto). Toma el mismo lock que
+    _arduino_send_command/_probe_nopal_board_sync para no cerrar la conexión
+    a mitad de un comando en curso."""
+    with _get_arduino_lock(device):
+        ser = _arduino_connections.pop(device, None)
+        if ser is not None:
+            try:
+                ser.close()
+            except Exception:
+                pass
 
 
 def _arduino_get_state(config: Dict[str, Any]) -> Optional[bool]:
@@ -329,50 +373,96 @@ def _parse_nopal_identification(line: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def _probe_nopal_board_sync(device: str, baud: int = NOPAL_BOARD_BAUD, timeout: float = 2.5) -> Optional[Dict[str, Any]]:
-    """Handshake autocontenido (mismo criterio que _probe_grbl_sync en
-    laser_service.py): abre su propia conexión y la cierra al terminar, sin
-    tocar ninguna conexión persistente. Manda NOPAL:ID? y devuelve las
-    capacidades declaradas más cuánto tardó en contestar (latency_ms, para
-    mostrar "tiempo de respuesta" real en vez de inventado), o None si el
-    puerto no contestó como firmware NOPAL dentro del timeout."""
+def _read_nopal_identification(ser, timeout: float) -> Optional[Dict[str, Any]]:
+    """Manda NOPAL:ID? por una conexión ya abierta (persistente o recién
+    creada) y espera la línea de identificación hasta `timeout`. Extraído de
+    _probe_nopal_board_sync para poder reusarlo tanto sobre una conexión
+    persistente como sobre una temporal (ver ahí el porqué)."""
     try:
-        import serial
-    except ImportError:
-        return None
-    try:
-        ser = serial.Serial(device, baud, timeout=0.5)
+        ser.reset_input_buffer()
+        request_sent_at = time.monotonic()
+        ser.write(b"NOPAL:ID?\n")
     except Exception:
         return None
-    try:
-        # El ESP32 resetea al abrir el puerto (toggle de DTR vía CH340/CP2102
-        # o el USB nativo) — mismo margen de arranque que laser_service.py
-        # antes de mandar el primer comando, si no el ID? se pierde.
-        time.sleep(2)
+    end_time = time.monotonic() + timeout
+    while time.monotonic() < end_time:
         try:
-            ser.reset_input_buffer()
-            request_sent_at = time.monotonic()
-            ser.write(b"NOPAL:ID?\n")
+            raw = ser.readline()
         except Exception:
             return None
-        end_time = time.monotonic() + timeout
-        while time.monotonic() < end_time:
+        if not raw:
+            continue
+        parsed = _parse_nopal_identification(raw.decode("utf-8", errors="ignore").strip())
+        if parsed:
+            parsed["latency_ms"] = round((time.monotonic() - request_sent_at) * 1000)
+            return parsed
+    return None
+
+
+def _probe_nopal_board_sync(device: str, baud: int = NOPAL_BOARD_BAUD, timeout: float = 2.5) -> Optional[Dict[str, Any]]:
+    """Handshake NOPAL:ID? contra `device`, protegido por el mismo lock por
+    puerto que usa _arduino_send_command (ver _get_arduino_lock) -- este
+    probeo se dispara en cada refreshAll() del frontend, incluido justo
+    después de todo power toggle, así que NO puede competir por los mismos
+    bytes con un comando en curso por la conexión persistente.
+
+    Si ya hay una conexión persistente abierta sobre este puerto
+    (_arduino_connections, ej. porque ya hay un accesorio registrado ahí),
+    se reutiliza esa misma conexión en vez de abrir una segunda: evita pagar
+    de nuevo el margen de arranque de 2s (la placa ya está lista hace rato)
+    y, sobre todo, evita que dos objetos serial.Serial() distintos lean del
+    mismo puerto físico a la vez -- confirmado contra hardware real durante
+    el debug de este bug: dos lectores concurrentes sobre el mismo /dev
+    terminan robándose respuestas entre sí (uno se queda con la
+    contestación que en realidad esperaba el otro), dejando ambos lados con
+    datos cruzados o comandos que nunca llegan a confirmarse aunque la
+    placa sí los haya ejecutado.
+
+    Si no hay conexión persistente todavía (primer probeo antes de
+    registrar el accesorio), se abre una temporal con el margen de arranque
+    de siempre, se usa y se cierra -- igual que antes, pero ahora bajo el
+    lock del puerto para que nadie más pueda abrir otra en simultáneo."""
+    with _get_arduino_lock(device):
+        existing = _arduino_connections.get(device)
+        if existing is not None:
+            if not existing.is_open:
+                _arduino_connections.pop(device, None)
+                existing = None
+        if existing is not None:
             try:
-                raw = ser.readline()
-            except Exception:
-                return None
-            if not raw:
-                continue
-            parsed = _parse_nopal_identification(raw.decode("utf-8", errors="ignore").strip())
-            if parsed:
-                parsed["latency_ms"] = round((time.monotonic() - request_sent_at) * 1000)
-                return parsed
-        return None
-    finally:
+                return _read_nopal_identification(existing, timeout)
+            except Exception as e:
+                logger.warning(f"[{device}] Fallo al probear por la conexión persistente: {e}")
+                old = _arduino_connections.pop(device, None)
+                if old is not None:
+                    try:
+                        old.close()
+                    except Exception:
+                        pass
+                # Sigue abajo e intenta con una conexión temporal nueva.
+
         try:
-            ser.close()
+            import serial
+        except ImportError:
+            return None
+        try:
+            ser = serial.Serial(device, baud, timeout=0.5)
         except Exception:
-            pass
+            return None
+        try:
+            # El ESP32 resetea al abrir el puerto (toggle de DTR vía
+            # CH340/CP2102 o el USB nativo) — mismo margen de arranque que
+            # laser_service.py antes de mandar el primer comando, si no el
+            # ID? se pierde. Solo aplica acá, en la rama sin conexión
+            # persistente todavía: si ya existe una, la placa hace rato que
+            # está arrancada y este sleep se salta.
+            time.sleep(2)
+            return _read_nopal_identification(ser, timeout)
+        finally:
+            try:
+                ser.close()
+            except Exception:
+                pass
 
 
 def list_usb_arduino_ports() -> List[Dict[str, Any]]:

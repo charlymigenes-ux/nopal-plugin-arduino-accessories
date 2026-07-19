@@ -3,3 +3,9 @@ __pycache__/
 .pytest_cache/
 accessory_registry.json
 data/
+
+# Credenciales reales de placas NOPAL (Wi-Fi/OTA) -- usa secrets.h.example
+# como plantilla, secrets.h con los datos reales nunca se sube (mismo
+# criterio que NOPAL core antes de que este firmware se moviera acá).
+firmware/nopal_accessory/secrets.h
+firmware/nopal_accessory/builds/

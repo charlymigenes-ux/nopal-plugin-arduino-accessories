@@ -10,6 +10,7 @@ from .services.accessory_service import (
     get_accessories,
     get_accessories_status,
     get_driver_names,
+    list_usb_arduino_ports,
     probe_wifi_board,
     register_accessory,
     rename_accessory,
@@ -44,6 +45,16 @@ async def accessory_arduino_discover_endpoint(user: dict = Depends(require_role(
     WS2812), para poblar el formulario de alta sin que el usuario tenga que
     adivinar nada."""
     return {"boards": await discover_arduino_boards()}
+
+
+@router.get("/api/accessories/arduino/list-ports")
+async def accessory_arduino_list_ports_endpoint(user: dict = Depends(require_role("admin"))):
+    """Puertos USB candidatos SIN exigir que ya respondan el handshake NOPAL
+    (a diferencia de /discover) -- para el asistente de primer uso, donde la
+    placa puede estar totalmente en blanco (sin firmware NOPAL todavía) y
+    por lo tanto no contesta NOPAL:ID?, pero igual hay que poder ofrecerla
+    como destino para flashear."""
+    return {"ports": list_usb_arduino_ports()}
 
 
 @router.post("/api/accessories/arduino/probe-wifi")

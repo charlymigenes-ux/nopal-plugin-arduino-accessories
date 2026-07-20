@@ -4,7 +4,8 @@
 
     const state = {
         accessories: [],   // /api/accessories/status, filtrados a driver === 'arduino'
-        boards: [],        // /api/accessories/arduino/discover
+        boards: [],        // /api/accessories/arduino/discover (placas por USB)
+        wifiBoard: null,    // placa "virtual" ya probada por /arduino/probe-wifi (o null)
         activity: [],       // /api/accessories/activity
         scenes: [],         // /api/accessories/scenes
         builds: [],          // /api/accessories/firmware/builds
@@ -80,8 +81,16 @@
     }
 
     function accessoryConnected(accessory) {
-        const { devices, locations } = boardDeviceSet();
         const config = accessory.config || {};
+        if (config.transport === 'wifi') {
+            // No hay un "descubrimiento" continuo de placas WiFi como el de
+            // USB (ver boards) -- se toma como conectada si la última
+            // consulta de estado obtuvo una respuesta real de la placa
+            // (accessory.on !== null es exactamente esa señal, ver
+            // _arduino_get_state en accessory_service.py).
+            return accessory.on !== null && accessory.on !== undefined;
+        }
+        const { devices, locations } = boardDeviceSet();
         return (config.device && devices.has(config.device)) || (config.location && locations.has(config.location));
     }
 
@@ -147,14 +156,27 @@
     }
 
     async function registerFromForm(form) {
-        const deviceValue = form.querySelector('#aa-add-device').value;
-        const board = state.boards.find(item => item.device === deviceValue);
-        if (!board) return toast('Selecciona una placa detectada.', 'error');
+        const transport = form.querySelector('#aa-add-transport').value;
         const name = form.querySelector('input[name="name"]').value.trim();
         if (!name) return toast('Ponle un nombre al accesorio.', 'error');
+
+        let board;
+        const config = { transport };
+        if (transport === 'wifi') {
+            board = state.wifiBoard;
+            if (!board) return toast('Primero prueba la conexión con la placa.', 'error');
+            config.ip = board.ip;
+            config.ota_username = form.querySelector('#aa-add-wifi-user').value;
+            config.ota_password = form.querySelector('#aa-add-wifi-pass').value;
+        } else {
+            const deviceValue = form.querySelector('#aa-add-device').value;
+            board = state.boards.find(item => item.device === deviceValue);
+            if (!board) return toast('Selecciona una placa detectada.', 'error');
+            config.device = board.device;
+            if (board.location) config.location = board.location;
+        }
+
         const isLed = form.querySelector('#aa-add-kind').value === 'led_strip';
-        const config = { device: board.device };
-        if (board.location) config.location = board.location;
         if (isLed) {
             config.led_mode = form.querySelector('select[name="led_mode"]').value;
         } else {
@@ -172,6 +194,27 @@
             closeAddPanel();
             await refreshAll();
         } catch (error) { toast(error.message, 'error'); }
+    }
+
+    async function probeWifiBoard() {
+        const ip = root.querySelector('#aa-add-wifi-ip').value.trim();
+        const username = root.querySelector('#aa-add-wifi-user').value;
+        const password = root.querySelector('#aa-add-wifi-pass').value;
+        const resultBox = root.querySelector('#aa-add-wifi-result');
+        if (!ip) return toast('Ponle la IP de la placa.', 'error');
+        resultBox.textContent = 'Probando…';
+        try {
+            const board = await api('/api/accessories/arduino/probe-wifi', {
+                method: 'POST',
+                body: new URLSearchParams({ ip, username, password }),
+            });
+            state.wifiBoard = board;
+            resultBox.textContent = `Placa encontrada: ${board.hostname || board.ip} · ${board.relays} relé(s)${board.wifi_connected ? '' : ' (WiFi no conectado en la placa)'}`;
+            updateAddFormFields();
+        } catch (error) {
+            state.wifiBoard = null;
+            resultBox.textContent = error.message;
+        }
     }
 
     async function runScene(scene) {
@@ -287,8 +330,23 @@
                 <div class="aa-panel-overlay" id="aa-add-panel" hidden>
                     <div class="aa-panel-backdrop" data-aa-close-add></div>
                     <form class="aa-panel-dialog" id="aa-add-form">
-                        <div class="aa-panel-header"><span><strong>Agregar accesorio</strong><small>Se registra contra una placa detectada por USB.</small></span><button type="button" data-aa-close-add>×</button></div>
-                        <label><span>Placa</span><select name="device" id="aa-add-device"></select></label>
+                        <div class="aa-panel-header"><span><strong>Agregar accesorio</strong><small>Por USB (placa ya detectada) o por WiFi (IP + credenciales OTA).</small></span><button type="button" data-aa-close-add>×</button></div>
+                        <label><span>Conexión</span>
+                            <select name="transport" id="aa-add-transport">
+                                <option value="usb">USB</option>
+                                <option value="wifi">WiFi</option>
+                            </select>
+                        </label>
+                        <div id="aa-add-usb-fields">
+                            <label><span>Placa</span><select name="device" id="aa-add-device"></select></label>
+                        </div>
+                        <div id="aa-add-wifi-fields" hidden>
+                            <label><span>IP de la placa</span><input type="text" id="aa-add-wifi-ip" placeholder="192.168.1.50"></label>
+                            <label><span>Usuario OTA</span><input type="text" id="aa-add-wifi-user" placeholder="nopal"></label>
+                            <label><span>Contraseña OTA</span><input type="password" id="aa-add-wifi-pass"></label>
+                            <button type="button" class="aa-btn" id="aa-add-wifi-probe">${icon(ICON_WIFI_ON, 15)}<span>Probar conexión</span></button>
+                            <small id="aa-add-wifi-result"></small>
+                        </div>
                         <label><span>Tipo</span>
                             <select name="kind" id="aa-add-kind">
                                 <option value="relay">Relé</option>
@@ -493,7 +551,12 @@
     }
 
     function updateAddFormFields() {
-        const board = state.boards.find(item => item.device === root.querySelector('#aa-add-device').value) || state.boards[0];
+        const isWifi = root.querySelector('#aa-add-transport').value === 'wifi';
+        root.querySelector('#aa-add-usb-fields').hidden = isWifi;
+        root.querySelector('#aa-add-wifi-fields').hidden = !isWifi;
+        const board = isWifi
+            ? state.wifiBoard
+            : (state.boards.find(item => item.device === root.querySelector('#aa-add-device').value) || state.boards[0]);
         const isLed = root.querySelector('#aa-add-kind').value === 'led_strip';
         root.querySelector('#aa-add-relay-field').hidden = isLed;
         root.querySelector('#aa-add-led-field').hidden = !isLed;
@@ -503,12 +566,14 @@
     }
 
     function openAddPanel() {
+        state.wifiBoard = null;
         populateAddForm();
         root.querySelector('#aa-add-panel').hidden = false;
     }
     function closeAddPanel() {
         root.querySelector('#aa-add-panel').hidden = true;
         root.querySelector('#aa-add-form').reset();
+        state.wifiBoard = null;
     }
 
     function openSceneModal() {
@@ -654,6 +719,8 @@
 
         root.querySelector('#aa-add-device').addEventListener('change', updateAddFormFields);
         root.querySelector('#aa-add-kind').addEventListener('change', updateAddFormFields);
+        root.querySelector('#aa-add-transport').addEventListener('change', () => { state.wifiBoard = null; root.querySelector('#aa-add-wifi-result').textContent = ''; updateAddFormFields(); });
+        root.querySelector('#aa-add-wifi-probe').addEventListener('click', probeWifiBoard);
         root.querySelector('#aa-add-form').addEventListener('submit', event => { event.preventDefault(); registerFromForm(event.target); });
         root.querySelector('#aa-scene-form').addEventListener('submit', event => { event.preventDefault(); createSceneFromForm(event.target); });
 

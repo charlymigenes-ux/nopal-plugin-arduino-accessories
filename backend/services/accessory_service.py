@@ -235,6 +235,71 @@ def _arduino_send_command(config: Dict[str, Any], command: str) -> Optional[str]
     return raw.decode("utf-8", errors="ignore").strip() or None
 
 
+def _arduino_http_request(
+    config: Dict[str, Any], method: str, path: str, params: Optional[Dict[str, Any]] = None
+) -> Optional[str]:
+    """Igual que _arduino_send_command pero para accesorios registrados con
+    config["transport"] == "wifi" -- pega directo a los endpoints
+    /api/relay y /api/led del firmware (mismo protocolo de texto que ya
+    habla Serial, ver nopal_accessory.ino: setupWebServer()), protegidos
+    con las mismas credenciales OTA que NOPAL ya le pide al usuario al dar
+    de alta un accesorio por WiFi (config["ota_username"]/["ota_password"]
+    -- no es una credencial nueva). Se devuelve el cuerpo de la respuesta
+    tal cual venga (sea "OK" o un "ERR:..."), igual criterio que el
+    transporte serie: quien llama decide qué significa la respuesta."""
+    ip = config.get("ip")
+    if not ip:
+        return None
+    try:
+        response = requests.request(
+            method,
+            f"http://{ip}{path}",
+            params=params,
+            auth=(config.get("ota_username", ""), config.get("ota_password", "")),
+            timeout=HTTP_TIMEOUT,
+        )
+        return response.text.strip() or None
+    except requests.exceptions.RequestException as e:
+        logger.warning(f"[{ip}] Fallo al hablar con la placa NOPAL por WiFi: {e}")
+        return None
+
+
+def probe_wifi_board(ip: str, username: str, password: str) -> Optional[Dict[str, Any]]:
+    """Prueba una placa NOPAL por WiFi antes de darla de alta: pega a su
+    GET /api/status (el mismo endpoint que ya usa el flasheo por OTA) y
+    arma la misma forma de capacidades que ya devuelve
+    _probe_nopal_board_sync() para placas por USB, así el frontend puede
+    reusar el mismo render sin importar el transporte. None si no
+    contesta o no es una placa NOPAL real -- nunca se inventa un dato."""
+    try:
+        response = requests.get(
+            f"http://{ip}/api/status",
+            auth=(username, password),
+            timeout=HTTP_TIMEOUT,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except (requests.exceptions.RequestException, ValueError) as e:
+        logger.debug(f"[{ip}] No se pudo probar la placa NOPAL por WiFi: {e}")
+        return None
+
+    if data.get("role") != "accessory":
+        return None
+
+    io = data.get("io", {})
+    wifi = data.get("wifi", {})
+    return {
+        "ip": ip,
+        "firmware": data.get("firmware", ""),
+        "hostname": data.get("hostname", ""),
+        "relays": io.get("relays", 0),
+        "pwm_led": bool(io.get("pwm_led")),
+        "ws2812": bool(io.get("ws2812")),
+        "ws2812_count": io.get("ws2812_count", 0),
+        "wifi_connected": bool(wifi.get("connected")),
+    }
+
+
 def release_arduino_connection(device: str) -> None:
     """Cierra y descarta la conexión serie persistente sobre `device` si hay
     una abierta (_arduino_connections). Usado por firmware_flash_service
@@ -261,15 +326,25 @@ def _arduino_get_state(config: Dict[str, Any]) -> Optional[bool]:
         # confirmó con éxito (persistido en el registro por
         # _persist_led_state), no un dato inventado.
         return config.get("led_on")
-    response = _arduino_send_command(config, f"NOPAL:R{config.get('relay', 1)}?")
+    relay = config.get("relay", 1)
+    if config.get("transport") == "wifi":
+        response = _arduino_http_request(config, "GET", "/api/relay", {"n": relay})
+    else:
+        response = _arduino_send_command(config, f"NOPAL:R{relay}?")
     if response is None:
         return None
     return {"ON": True, "OFF": False}.get(response)
 
 
 def _arduino_set_state(config: Dict[str, Any], on: bool) -> bool:
-    action = "ON" if on else "OFF"
-    response = _arduino_send_command(config, f"NOPAL:R{config.get('relay', 1)}:{action}")
+    relay = config.get("relay", 1)
+    if config.get("transport") == "wifi":
+        response = _arduino_http_request(
+            config, "POST", "/api/relay", {"n": relay, "on": "true" if on else "false"}
+        )
+    else:
+        action = "ON" if on else "OFF"
+        response = _arduino_send_command(config, f"NOPAL:R{relay}:{action}")
     return response == "OK"
 
 
@@ -278,9 +353,18 @@ def _arduino_set_led(config: Dict[str, Any], red: int, green: int, blue: int) ->
     compartida get_state/set_state (que sigue siendo booleana para los
     demás drivers). config["led_mode"] decide si la placa maneja una tira
     PWM analógica ("pwm", comando NOPAL:LED) o WS2812 ("ws2812", comando
-    NOPAL:WS) — ver capacidades declaradas por discover_arduino_boards()."""
-    prefix = "LED" if config.get("led_mode") == "pwm" else "WS"
-    response = _arduino_send_command(config, f"NOPAL:{prefix}:{red},{green},{blue}")
+    NOPAL:WS) — ver capacidades declaradas por discover_arduino_boards().
+    config["transport"] decide, por separado, si el comando viaja por
+    serie o por WiFi (ver _arduino_http_request)."""
+    is_pwm = config.get("led_mode") == "pwm"
+    if config.get("transport") == "wifi":
+        response = _arduino_http_request(
+            config, "POST", "/api/led",
+            {"mode": "pwm" if is_pwm else "ws2812", "r": red, "g": green, "b": blue},
+        )
+    else:
+        prefix = "LED" if is_pwm else "WS"
+        response = _arduino_send_command(config, f"NOPAL:{prefix}:{red},{green},{blue}")
     return response == "OK"
 
 
@@ -304,7 +388,11 @@ DRIVERS: Dict[str, Dict[str, Any]] = {
         # "relay" no está en required: los accesorios de tira LED
         # (kind="led_strip") no lo llevan, solo "led_mode". Los de relé
         # siempre lo mandan porque el formulario de alta lo exige.
-        "required": ("device",),
+        # "required" es una función acá (no una tupla fija como el resto de
+        # los drivers) porque lo que hace falta depende de
+        # config["transport"]: "device" para USB, "ip" para WiFi -- ver
+        # register_accessory(), que soporta ambas formas.
+        "required": lambda config: ("ip",) if config.get("transport") == "wifi" else ("device",),
         "get_state": _arduino_get_state,
         "set_state": _arduino_set_state,
         "set_color": _arduino_set_led,
@@ -532,11 +620,14 @@ def _save_registry(entries: List[Dict[str, Any]]):
 
 
 def _public(entry: Dict[str, Any]) -> Dict[str, Any]:
-    """Oculta credenciales (ej. token de Home Assistant) antes de devolver la
-    entrada — no hay razón para que un token vuelva en cada GET del listado."""
+    """Oculta credenciales (ej. token de Home Assistant, contraseña OTA de
+    un accesorio arduino por WiFi) antes de devolver la entrada — no hay
+    razón para que vuelvan en cada GET del listado."""
     config = dict(entry.get("config", {}))
     if "token" in config:
         config["token"] = "***"
+    if "ota_password" in config:
+        config["ota_password"] = "***"
     return {**entry, "config": config}
 
 
@@ -549,7 +640,8 @@ def register_accessory(name: str, kind: str, driver: str, config: Dict[str, Any]
     if spec is None:
         raise ValueError(f"Driver desconocido: {driver}")
 
-    missing = [key for key in spec["required"] if not config.get(key)]
+    required = spec["required"](config) if callable(spec["required"]) else spec["required"]
+    missing = [key for key in required if not config.get(key)]
     if missing:
         raise ValueError(f"Faltan campos de configuración: {', '.join(missing)}")
 

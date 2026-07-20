@@ -10,6 +10,7 @@ from .services.accessory_service import (
     get_accessories,
     get_accessories_status,
     get_driver_names,
+    probe_wifi_board,
     register_accessory,
     rename_accessory,
     set_accessory_led_color,
@@ -43,6 +44,23 @@ async def accessory_arduino_discover_endpoint(user: dict = Depends(require_role(
     WS2812), para poblar el formulario de alta sin que el usuario tenga que
     adivinar nada."""
     return {"boards": await discover_arduino_boards()}
+
+
+@router.post("/api/accessories/arduino/probe-wifi")
+async def accessory_arduino_probe_wifi_endpoint(
+    ip: str = Form(...),
+    username: str = Form(...),
+    password: str = Form(...),
+    user: dict = Depends(require_role("admin")),
+):
+    """Prueba una placa NOPAL por IP antes de darla de alta por WiFi (mismas
+    credenciales OTA que ya usa el flasheo por WiFi) — mismo propósito que
+    el descubrimiento USB, pero para una placa que no está conectada acá
+    por cable."""
+    board = await asyncio.get_event_loop().run_in_executor(None, probe_wifi_board, ip, username, password)
+    if board is None:
+        raise HTTPException(status_code=400, detail="No se encontró una placa NOPAL en esa IP con esas credenciales")
+    return board
 
 
 @router.get("/api/accessories")

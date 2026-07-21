@@ -76,3 +76,35 @@ def update_board_pin(
     pins[index]["params"] = params
     _save_boards(boards)
     return board
+
+
+def update_board_info(
+    board_id: str,
+    name: Optional[str] = None,
+    device: Optional[str] = None,
+    ip: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Edita nombre/puerto USB/IP de una placa ya agregada -- no toca sus
+    pines. Cada campo es opcional para poder editar uno solo sin pisar los
+    otros dos (ej. renombrar sin tocar la IP)."""
+    boards = _load_boards()
+    board = next((b for b in boards if b.get("id") == board_id), None)
+    if board is None:
+        return None
+    if name is not None:
+        board["name"] = name
+    if device is not None:
+        board["device"] = device or None
+    if ip is not None:
+        board["ip"] = ip or None
+    _save_boards(boards)
+    return board
+
+
+def remove_board(board_id: str) -> bool:
+    boards = _load_boards()
+    remaining = [b for b in boards if b.get("id") != board_id]
+    if len(remaining) == len(boards):
+        return False
+    _save_boards(remaining)
+    return True

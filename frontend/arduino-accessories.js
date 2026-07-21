@@ -430,10 +430,19 @@
         return `Hace ${hours} h`;
     }
 
-    function boardPlaceholderSvg(catalogId) {
+    // `rowCount` = la cantidad de filas de pines visibles a los costados
+    // (el mayor entre izquierda/derecha) -- antes esto era un número fijo
+    // (8) sin relación con las filas reales, así que el dibujo quedaba
+    // chico y centrado en medio de una columna mucho más alta, con un
+    // montón de espacio vacío arriba/abajo (se leía como "falta la
+    // imagen"). Ahora dibuja una fila por cada fila real, para que las
+    // marcas de pines del costado del chip queden a la misma altura que
+    // las filas del mapa (la placa se estira al 100% de su columna via
+    // CSS -- ver .wsa-board-image / .wsa-board-image svg).
+    function boardPlaceholderSvg(catalogId, rowCount) {
         const entry = catalogEntry(catalogId);
         const chip = entry ? entry.chipLabel : 'MCU';
-        const rows = 8;
+        const rows = Math.max(rowCount || 8, 1);
         const height = 14 + rows * 11 + 8;
         let pinRects = '';
         for (let i = 0; i < rows; i++) {
@@ -442,7 +451,7 @@
             pinRects += `<rect x="104" y="${y}" width="10" height="5" rx="1" fill="var(--wsa-border)"/>`;
         }
         return `
-            <svg width="120" height="${height}" viewBox="0 0 120 ${height}" xmlns="http://www.w3.org/2000/svg">
+            <svg width="120" height="100%" viewBox="0 0 120 ${height}" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
                 <rect x="16" y="4" width="88" height="${height - 8}" rx="8" fill="var(--wsa-panel)" stroke="var(--wsa-accent)" stroke-width="1.5"/>
                 <rect x="34" y="${(height - 8) / 2 - 12}" width="52" height="24" rx="4" fill="var(--wsa-control)" stroke="var(--wsa-border)"/>
                 <text x="60" y="${(height - 8) / 2 + 4}" text-anchor="middle" font-size="7" fill="var(--wsa-text-muted)" font-family="monospace">${esc(chip)}</text>
@@ -453,12 +462,14 @@
     // Si el modelo tiene foto real (hoy solo tcall_v13), se usa esa en vez del
     // placeholder genérico -- la ruta es relativa al propio script del plugin,
     // servido por NOPAL en /plugins-static/arduino-accessories/frontend/...
-    function boardImageHtml(catalogId) {
+    // Con foto real no hace falta rowCount -- la foto se estira sola con
+    // "height:auto" (ver CSS), no está hecha de filas dibujadas a mano.
+    function boardImageHtml(catalogId, rowCount) {
         const entry = catalogEntry(catalogId);
         if (entry?.image) {
             return `<img class="wsa-board-photo" src="${esc(entry.image)}" alt="${esc(entry.label)}">`;
         }
-        return boardPlaceholderSvg(catalogId);
+        return boardPlaceholderSvg(catalogId, rowCount);
     }
 
     // ============================================================================
@@ -484,6 +495,80 @@
             render();
         } catch (e) {
             toast(e.message || 'No se pudo agregar la placa.', 'error');
+        }
+    }
+
+    // ============================================================================
+    // GESTIONAR PLACAS -- editar nombre/puerto/IP o eliminar una placa ya
+    // agregada. Habla con el backend real (ver board_pinmap_service.py),
+    // igual que addBoardFromForm/applyPinConfig.
+    // ============================================================================
+
+    function manageBoardsListHtml() {
+        if (!state.boards.length) return '<p class="wsa-empty">Todavía no agregaste ninguna placa.</p>';
+        return state.boards.map(board => `
+            <div class="wsa-manageboard-row" data-wsa-manageboard="${board.id}">
+                <div class="wsa-manageboard-fields">
+                    <label><span>Nombre</span><input type="text" data-wsa-manageboard-field="name" value="${esc(board.name)}" maxlength="40"></label>
+                    <label><span>Puerto USB</span><input type="text" data-wsa-manageboard-field="device" value="${esc(board.device || '')}" placeholder="/dev/ttyUSB0"></label>
+                    <label><span>IP</span><input type="text" data-wsa-manageboard-field="ip" value="${esc(board.ip || '')}" placeholder="192.168.0.83"></label>
+                </div>
+                <div class="wsa-manageboard-actions">
+                    <button type="button" class="wsa-btn-icon" data-wsa-manageboard-save="${board.id}" title="Guardar">${icon(ICON_CHECK, 14)}</button>
+                    <button type="button" class="wsa-btn-icon wsa-btn-icon-danger" data-wsa-manageboard-delete="${board.id}" title="Eliminar">${icon(ICON_CLOSE, 14)}</button>
+                </div>
+            </div>`).join('');
+    }
+
+    function openManageBoardsPanel() {
+        root.querySelector('#wsa-manageboards-list').innerHTML = manageBoardsListHtml();
+        root.querySelector('#wsa-manageboards-panel').hidden = false;
+    }
+
+    function closeManageBoardsPanel() {
+        root.querySelector('#wsa-manageboards-panel').hidden = true;
+    }
+
+    async function saveManageBoardInfo(boardId) {
+        const row = root.querySelector(`.wsa-manageboard-row[data-wsa-manageboard="${boardId}"]`);
+        if (!row) return;
+        const name = row.querySelector('[data-wsa-manageboard-field="name"]').value.trim();
+        const device = row.querySelector('[data-wsa-manageboard-field="device"]').value.trim();
+        const ip = row.querySelector('[data-wsa-manageboard-field="ip"]').value.trim();
+        if (!name) return toast('Ponle un nombre a la placa.', 'error');
+        try {
+            const updated = await api(`/api/accessories/arduino/boards/${boardId}`, {
+                method: 'PUT',
+                body: new URLSearchParams({ name, device, ip }),
+            });
+            const board = state.boards.find(b => b.id === boardId);
+            if (board) Object.assign(board, { name: updated.name, device: updated.device, ip: updated.ip });
+            toast('Placa actualizada.');
+            render();
+        } catch (e) {
+            toast(e.message || 'No se pudo actualizar la placa.', 'error');
+        }
+    }
+
+    async function deleteManageBoard(boardId) {
+        const board = state.boards.find(b => b.id === boardId);
+        if (!board) return;
+        const confirmed = window.appConfirm
+            ? await window.appConfirm(`¿Eliminar "${board.name}"? Se borra su configuración de pines guardada.`, 'Eliminar placa')
+            : window.confirm(`¿Eliminar "${board.name}"?`);
+        if (!confirmed) return;
+        try {
+            await api(`/api/accessories/arduino/boards/${boardId}`, { method: 'DELETE' });
+            state.boards = state.boards.filter(b => b.id !== boardId);
+            if (state.activeBoardId === boardId) {
+                state.activeBoardId = state.boards[0]?.id || null;
+                state.selectedPinKey = null;
+            }
+            toast('Placa eliminada.');
+            if (state.boards.length) openManageBoardsPanel(); else closeManageBoardsPanel();
+            render();
+        } catch (e) {
+            toast(e.message || 'No se pudo eliminar la placa.', 'error');
         }
     }
 
@@ -865,7 +950,7 @@
                         <nav class="wsa-subnav" id="wsa-subnav"></nav>
                         <div class="wsa-profile-card">
                             <div><strong>${esc(state.profile.name)}</strong><small>${esc(state.profile.version)}</small></div>
-                            <button type="button" class="wsa-btn-icon" title="Ajustes">${icon(ICON_GEAR, 15)}</button>
+                            <button type="button" class="wsa-btn-icon wsa-btn-icon-ghost" id="wsa-profile-settings-btn" title="Ajustes">${icon(ICON_GEAR, 15)}</button>
                         </div>
                     </aside>
                     <div class="wsa-content" id="wsa-content"></div>
@@ -883,6 +968,14 @@
                         <label><span>Nombre / apodo</span><input type="text" id="wsa-addboard-name" maxlength="40" placeholder="Ej. Estación láser"></label>
                         <div class="wsa-panel-actions"><button type="button" data-wsa-close-addboard>Cancelar</button><button type="submit" class="wsa-btn-accent">Agregar</button></div>
                     </form>
+                </div>
+
+                <div class="wsa-panel-overlay" id="wsa-manageboards-panel" hidden>
+                    <div class="wsa-panel-backdrop" data-wsa-close-manageboards></div>
+                    <div class="wsa-panel-dialog wsa-manageboards-dialog">
+                        <div class="wsa-panel-header"><span><strong>Gestionar placas</strong><small>Edita el nombre, puerto USB o IP de cada placa, o eliminala.</small></span><button type="button" data-wsa-close-manageboards>×</button></div>
+                        <div class="wsa-manageboards-list" id="wsa-manageboards-list"></div>
+                    </div>
                 </div>
             </section>`;
     }
@@ -1140,8 +1233,8 @@
                     <button type="button" class="wsa-board-tab wsa-board-tab-add" id="wsa-addboard-btn">${icon(ICON_PLUS, 14)}<span>Agregar placa</span></button>
                 </div>
                 <div class="wsa-boardbar-actions">
-                    <button type="button" class="wsa-btn" id="wsa-connect-btn">${icon(ICON_ZAP, 14)}<span>Conectar placa real (USB/WiFi)</span></button>
-                    <button type="button" class="wsa-btn" id="wsa-scan-btn" ${state.scanning ? 'disabled' : ''}>${icon(ICON_ZAP, 14)}<span>${state.scanning ? 'Escaneando…' : 'Escanear pines'}</span></button>
+                    <button type="button" class="wsa-btn-icon" id="wsa-manageboards-btn" title="Gestionar placas">${icon(ICON_LAYOUT, 15)}</button>
+                    <button type="button" class="wsa-btn" id="wsa-connect-btn">${icon(ICON_ZAP, 14)}<span>Conectar placa (USB/WiFi)</span></button>
                 </div>
             </div>
 
@@ -1156,11 +1249,17 @@
                     <label class="wsa-showall-toggle"><input type="checkbox" id="wsa-showall-pins" ${board.showAllPins ? 'checked' : ''}><span></span> Mostrar todos los pines del conector (no solo los que usa el firmware)</label>
                     <div class="wsa-pin-columns">
                         <div class="wsa-pin-col">${leftEntries.map(({ pin, i }) => pinRowHtml(pin, 'left', i)).join('') || '<p class="wsa-empty">El firmware no usa pines de este lado.</p>'}</div>
-                        <div class="wsa-board-image">${boardImageHtml(board.catalogId)}</div>
+                        <div class="wsa-board-image">${boardImageHtml(board.catalogId, Math.max(leftEntries.length, rightEntries.length))}</div>
                         <div class="wsa-pin-col">${rightEntries.map(({ pin, i }) => pinRowHtml(pin, 'right', i)).join('') || '<p class="wsa-empty">El firmware no usa pines de este lado.</p>'}</div>
                     </div>
                 </div>
-                <div class="wsa-card wsa-inspector-card" id="wsa-inspector">${renderPinInspectorHtml()}</div>
+                <div class="wsa-card wsa-inspector-card" id="wsa-inspector">
+                    <div class="wsa-card-title-row">
+                        <h2>${icon(ICON_GEAR, 16)}Inspector de pin</h2>
+                        <button type="button" class="wsa-btn wsa-btn-small" id="wsa-scan-btn" ${state.scanning ? 'disabled' : ''}>${icon(ICON_ZAP, 13)}<span>${state.scanning ? 'Escaneando…' : 'Escanear pines'}</span></button>
+                    </div>
+                    <div id="wsa-inspector-body">${renderPinInspectorHtml()}</div>
+                </div>
             </div>
 
             ${cardWrap('Leyenda de roles', ICON_GRID, `<div class="wsa-legend">${Object.entries(PIN_CATEGORIES).map(([id, cat]) => `<span class="wsa-legend-item"><i style="background:${cat.color}"></i>${esc(cat.label)}</span>`).join('')}</div>`)}
@@ -1195,7 +1294,7 @@
     function renderPinInspectorHtml() {
         const pin = selectedPin();
         if (!pin) {
-            return `<h2>${icon(ICON_GEAR, 16)}Inspector de pin</h2><p class="wsa-empty">Selecciona un pin del mapa para configurarlo.</p>`;
+            return `<p class="wsa-empty">Selecciona un pin del mapa para configurarlo.</p>`;
         }
         const fixed = categoryInfo(pin.category).fixed;
         // displayCategoryId es lo que se MUESTRA (badge + parámetros): la
@@ -1208,7 +1307,6 @@
         const common = pin.common || {};
         const paramsHtml = cat.params.map(param => pinParamFieldHtml(param, (pin.params || {})[param.key])).join('');
         return `
-            <h2>${icon(ICON_GEAR, 16)}Inspector de pin</h2>
             <div class="wsa-inspector-title"><strong>${esc(pin.gpio)}</strong><span>#${pin.physical}</span></div>
             <p class="wsa-inspector-sub">${esc(pin.label)}</p>
             <label><span>Función asignada</span>
@@ -1433,11 +1531,20 @@
         root.querySelectorAll('[data-wsa-close-addboard]').forEach(el => el.addEventListener('click', closeAddBoardPanel));
         root.querySelector('#wsa-addboard-form').addEventListener('submit', event => { event.preventDefault(); addBoardFromForm(event.target); });
 
+        root.querySelectorAll('[data-wsa-close-manageboards]').forEach(el => el.addEventListener('click', closeManageBoardsPanel));
+        root.querySelector('#wsa-manageboards-list').addEventListener('click', event => {
+            const saveBtn = event.target.closest('[data-wsa-manageboard-save]');
+            if (saveBtn) { saveManageBoardInfo(saveBtn.dataset.wsaManageboardSave); return; }
+            const deleteBtn = event.target.closest('[data-wsa-manageboard-delete]');
+            if (deleteBtn) { deleteManageBoard(deleteBtn.dataset.wsaManageboardDelete); return; }
+        });
+
         root.querySelector('#wsa-content').addEventListener('click', event => {
             const boardTab = event.target.closest('[data-wsa-board]');
             if (boardTab) { state.activeBoardId = boardTab.dataset.wsaBoard; state.selectedPinKey = null; render(); return; }
 
             if (event.target.closest('#wsa-addboard-btn')) { openAddBoardPanel(); return; }
+            if (event.target.closest('#wsa-manageboards-btn')) { openManageBoardsPanel(); return; }
 
             if (event.target.closest('#wsa-scan-btn')) { scanPins(); return; }
 

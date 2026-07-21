@@ -193,6 +193,16 @@
 .wsa-btn:hover { border-color: rgba(var(--wsa-accent-rgb), .5); color: var(--wsa-accent); }
 .wsa-btn-accent { border-color: var(--wsa-accent); background: rgba(var(--wsa-accent-rgb), .16); color: var(--wsa-accent); }
 .wsa-btn-block { width: 100%; justify-content: center; margin-top: 10px; }
+.wsa-btn-small { padding: 5px 10px; font-size: .74rem; }
+
+/* Botón "Ajustes" de la tarjeta de perfil (sidebar) -- explícitamente sin
+   fondo/sombra propios (transparent), para que no herede ningún color de
+   acento del tema activo (el tema "Rojo" de NOPAL, por ejemplo, tiñe
+   --wsa-accent de rojo, y .wsa-btn-icon normal se ve como una alerta). */
+.wsa-btn-icon-ghost { background: transparent; box-shadow: none; }
+.wsa-btn-icon-ghost:hover { background: var(--wsa-control); }
+.wsa-btn-icon-danger { color: #f87171; border-color: rgba(248, 113, 113, .35); }
+.wsa-btn-icon-danger:hover { border-color: #f87171; background: rgba(248, 113, 113, .12); color: #f87171; }
 
 .wsa-switch { position: relative; display: inline-block; width: 38px; height: 21px; flex-shrink: 0; }
 .wsa-switch input { opacity: 0; width: 0; height: 0; }
@@ -236,21 +246,28 @@
 
 /* ── Mapa de pines ── */
 .wsa-pinmap-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; align-items: start; }
-.wsa-pin-columns { display: grid; grid-template-columns: 1fr auto 1fr; gap: 14px; align-items: start; }
+/* align-items: stretch (default) a propósito -- así la columna del medio
+   (.wsa-board-image) se estira a la altura real de las columnas de pines
+   de los costados, para que el dibujo del chip (placeholder SVG, ver
+   boardPlaceholderSvg) quede a la misma altura fila por fila. */
+.wsa-pin-columns { display: grid; grid-template-columns: 1fr auto 1fr; gap: 14px; }
 .wsa-pin-col { display: flex; flex-direction: column; gap: 5px; }
-.wsa-board-image { display: flex; align-items: center; justify-content: center; padding: 8px 0; position: sticky; top: 8px; }
+.wsa-board-image { display: flex; align-items: center; justify-content: center; padding: 8px 0; }
 .wsa-board-photo {
-    /* Tamaño 100% natural de la foto, sin forzar ancho fijo -- las columnas
-       de pines se acomodan alrededor, no al revés. `position: sticky` en el
-       contenedor la mantiene visible mientras se hace scroll por una lista
-       larga de pines. */
+    /* Tamaño 100% natural de la foto (caso con foto real, ej. T-Call) --
+       sin forzar alto, a diferencia del placeholder SVG genérico de abajo
+       que sí se estira para alinearse fila por fila. */
     width: auto;
     height: auto;
     max-width: 100%;
     border-radius: 8px;
     box-shadow: 0 4px 16px rgba(0, 0, 0, .35);
 }
-.wsa-board-image svg { align-self: center; }
+/* Placeholder SVG (sin foto real): se estira a la altura completa de su
+   columna (ver boardImageHtml/boardPlaceholderSvg -- dibuja una fila por
+   cada fila real de pines, preserveAspectRatio="none" para que el estirado
+   no distorsione el ancho). */
+.wsa-board-image svg { align-self: stretch; height: 100%; }
 .wsa-showall-toggle { display: flex; align-items: center; gap: 8px; font-size: .78rem; color: var(--text-muted); margin-bottom: 12px; cursor: pointer; }
 .wsa-showall-toggle input { width: 14px; height: 14px; accent-color: var(--wsa-accent); }
 .wsa-connected-tag { color: var(--wsa-accent); font-weight: 600; font-size: .68rem; text-transform: uppercase; letter-spacing: .02em; }
@@ -462,6 +479,30 @@
     cursor: pointer;
 }
 .wsa-panel-actions button.wsa-btn-accent { border-color: var(--wsa-accent); background: rgba(var(--wsa-accent-rgb), .18); color: var(--wsa-accent); }
+
+/* ── Modal "Gestionar placas" -- lista de filas editables, no un form único ── */
+.wsa-manageboards-dialog { width: min(560px, 94vw); max-height: 80vh; }
+.wsa-manageboards-list { display: flex; flex-direction: column; gap: 10px; overflow-y: auto; max-height: 60vh; padding-right: 2px; }
+.wsa-manageboard-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+    padding: 10px;
+    border: 1px solid var(--wsa-border);
+    border-radius: 10px;
+    background: var(--wsa-control);
+}
+.wsa-manageboard-fields { flex: 1; display: grid; grid-template-columns: 1.2fr 1fr 1fr; gap: 8px; }
+.wsa-manageboard-fields label { display: flex; flex-direction: column; gap: 4px; font-size: .72rem; color: var(--text-muted); }
+.wsa-manageboard-fields input {
+    padding: 7px 9px;
+    border: 1px solid var(--wsa-border);
+    border-radius: 7px;
+    background: var(--wsa-panel);
+    color: var(--text);
+    font-size: .8rem;
+}
+.wsa-manageboard-actions { display: flex; gap: 6px; flex-shrink: 0; }
 
 /* ── Asistente de firmware -- habla con el backend real, ver comentario en el JS ── */
 .wsa-wizard { display: flex; align-items: center; justify-content: center; min-height: 50vh; padding: 20px; }

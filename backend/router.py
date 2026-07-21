@@ -1,5 +1,6 @@
 import asyncio
 import json
+from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
@@ -125,6 +126,29 @@ async def arduino_boards_update_pin_endpoint(
     if board is None:
         raise HTTPException(status_code=404, detail="Placa o pin no encontrado")
     return board
+
+
+@router.put("/api/accessories/arduino/boards/{board_id}")
+async def arduino_boards_update_info_endpoint(
+    board_id: str,
+    name: Optional[str] = Form(None),
+    device: Optional[str] = Form(None),
+    ip: Optional[str] = Form(None),
+    user: dict = Depends(require_role("admin")),
+):
+    """Edita nombre/puerto USB/IP de una placa ya agregada -- ver
+    board_pinmap_service.update_board_info. No toca sus pines."""
+    board = board_pinmap_service.update_board_info(board_id, name, device, ip)
+    if board is None:
+        raise HTTPException(status_code=404, detail="Placa no encontrada")
+    return board
+
+
+@router.delete("/api/accessories/arduino/boards/{board_id}")
+async def arduino_boards_remove_endpoint(board_id: str, user: dict = Depends(require_role("admin"))):
+    if not board_pinmap_service.remove_board(board_id):
+        raise HTTPException(status_code=404, detail="Placa no encontrada")
+    return {"success": True}
 
 
 @router.get("/api/accessories")

@@ -109,3 +109,60 @@ class TestArduinoBoardsUpdatePin:
             data={"category": "relay", "common": "{}", "params": "{}"},
         )
         assert response.status_code == 403
+
+
+class TestArduinoBoardsUpdateInfo:
+    def test_rename_board(self, client, as_admin):
+        board = _add_board(client, as_admin, name="Original")
+        response = client.put(f"/api/accessories/arduino/boards/{board['id']}", data={"name": "Renombrada"})
+        assert response.status_code == 200
+        entry = response.json()
+        assert entry["name"] == "Renombrada"
+        # No se tocaron device/ip al no mandarlos.
+        assert entry["device"] is None
+        assert entry["ip"] is None
+
+    def test_update_device_and_ip(self, client, as_admin):
+        board = _add_board(client, as_admin)
+        response = client.put(
+            f"/api/accessories/arduino/boards/{board['id']}",
+            data={"device": "/dev/ttyUSB1", "ip": "192.168.0.83"},
+        )
+        entry = response.json()
+        assert entry["device"] == "/dev/ttyUSB1"
+        assert entry["ip"] == "192.168.0.83"
+        # El nombre no se tocó.
+        assert entry["name"] == board["name"]
+
+    def test_partial_update_does_not_clear_other_fields(self, client, as_admin):
+        board = _add_board(client, as_admin)
+        client.put(f"/api/accessories/arduino/boards/{board['id']}", data={"device": "/dev/ttyUSB0"})
+        response = client.put(f"/api/accessories/arduino/boards/{board['id']}", data={"name": "Nuevo nombre"})
+        entry = response.json()
+        assert entry["name"] == "Nuevo nombre"
+        assert entry["device"] == "/dev/ttyUSB0"
+
+    def test_unknown_board_404(self, client, as_admin):
+        response = client.put("/api/accessories/arduino/boards/no-existe", data={"name": "x"})
+        assert response.status_code == 404
+
+    def test_requires_admin(self, client, as_operator):
+        response = client.put("/api/accessories/arduino/boards/any", data={"name": "x"})
+        assert response.status_code == 403
+
+
+class TestArduinoBoardsRemove:
+    def test_remove_board(self, client, as_admin):
+        board = _add_board(client, as_admin)
+        response = client.delete(f"/api/accessories/arduino/boards/{board['id']}")
+        assert response.status_code == 200
+        assert response.json() == {"success": True}
+        assert client.get("/api/accessories/arduino/boards").json()["boards"] == []
+
+    def test_unknown_board_404(self, client, as_admin):
+        response = client.delete("/api/accessories/arduino/boards/no-existe")
+        assert response.status_code == 404
+
+    def test_requires_admin(self, client, as_operator):
+        response = client.delete("/api/accessories/arduino/boards/any")
+        assert response.status_code == 403

@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
   "id": "arduino-accessories",
-  "name": "Accesorios Arduino/ESP32",
-  "version": "1.0.0",
+  "name": "Automatización de Taller",
+  "version": "2.1.0",
   "publisher": "NOPAL Labs",
   "category": "Accesorios",
-  "description": "Controla relés y tiras LED conectadas a una placa Arduino/ESP32 propia, sin depender de enchufes WiFi de terceros.",
+  "description": "Mapea los pines de tu placa Arduino/ESP32 y arma escenas de automatización por máquina (impresora, láser, CNC) sin depender de enchufes WiFi de terceros.",
   "permissions": ["Detectar puertos USB", "Enviar comandos a la placa", "Flashear firmware por USB u OTA"],
   "compatibility": ["Impresión 3D", "Láser", "CNC"],
   "frontend": {

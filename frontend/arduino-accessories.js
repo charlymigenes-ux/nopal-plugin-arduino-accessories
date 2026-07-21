@@ -465,19 +465,64 @@
     // ACCIONES (mock, todas locales -- ver banner de datos mock arriba)
     // ============================================================================
 
-    function addBoardFromForm(form) {
+    async function addBoardFromForm(form) {
         const catalogId = form.querySelector('#wsa-addboard-model').value;
         const name = form.querySelector('#wsa-addboard-name').value.trim();
         const entry = catalogEntry(catalogId);
         if (!entry) return toast('Elige un modelo.', 'error');
         if (!name) return toast('Ponle un nombre a la placa.', 'error');
-        const id = `board_${Date.now()}`;
-        state.boards.push({ id, catalogId, name, pins: clonePins(entry.pins), connected: false, showAllPins: true });
-        state.activeBoardId = id;
-        state.selectedPinKey = null;
-        closeAddBoardPanel();
-        toast(`${name} (${entry.label}) se agregó.`);
-        render();
+        try {
+            const created = await api('/api/accessories/arduino/boards', {
+                method: 'POST',
+                body: new URLSearchParams({ catalog_id: catalogId, name, pins: JSON.stringify(entry.pins) }),
+            });
+            state.boards.push({ id: created.id, catalogId, name, pins: created.pins, connected: false, showAllPins: true });
+            state.activeBoardId = created.id;
+            state.selectedPinKey = null;
+            closeAddBoardPanel();
+            toast(`${name} (${entry.label}) se agregó.`);
+            render();
+        } catch (e) {
+            toast(e.message || 'No se pudo agregar la placa.', 'error');
+        }
+    }
+
+    // Carga las placas persistidas de verdad (ver board_pinmap_service.py) y
+    // reemplaza la placa mock inicial en cuanto resuelve. Si todavía no hay
+    // ninguna guardada (primera vez que se usa el plugin), crea la placa
+    // por defecto en el backend para que quede persistida desde ya, en vez
+    // de dejarla solo en memoria como antes.
+    async function loadBoardsFromBackend() {
+        try {
+            const data = await api('/api/accessories/arduino/boards');
+            let boards = data.boards || [];
+            if (boards.length === 0) {
+                const defaultEntry = BOARD_CATALOG[0];
+                const created = await api('/api/accessories/arduino/boards', {
+                    method: 'POST',
+                    body: new URLSearchParams({
+                        catalog_id: defaultEntry.id,
+                        name: 'Taller Principal',
+                        pins: JSON.stringify(defaultEntry.pins),
+                    }),
+                });
+                boards = [created];
+            }
+            state.boards = boards.map(b => ({
+                id: b.id,
+                catalogId: b.catalog_id,
+                name: b.name,
+                pins: b.pins,
+                device: b.device || null,
+                ip: b.ip || null,
+                connected: false,
+                showAllPins: true,
+            }));
+            state.activeBoardId = state.boards[0]?.id || null;
+            render();
+        } catch (e) {
+            toast('No se pudieron cargar las placas guardadas.', 'error');
+        }
     }
 
     function selectPin(side, index) {
@@ -496,16 +541,45 @@
         render();
     }
 
-    function applyPinConfig() {
+    // Único otro punto del archivo (además de api()/asistente de firmware)
+    // que habla con el backend real: guarda de verdad qué le asignaste a
+    // este pin (ver board_pinmap_service.py). Es documentación/planificación
+    // real -- el firmware sigue teniendo roles de pin fijos de fábrica, esto
+    // no lo reconfigura a él.
+    async function applyPinConfig() {
         const pin = selectedPin();
-        if (!pin) return;
-        if (state.pendingCategory && state.pendingCategory !== pin.category) {
-            pin.category = state.pendingCategory;
-            pin.label = categoryInfo(state.pendingCategory).label;
+        const board = activeBoard();
+        if (!pin || !board || !state.selectedPinKey) return;
+        const category = state.pendingCategory || pin.category;
+        const cat = categoryInfo(category);
+
+        const common = {};
+        root?.querySelectorAll('.wsa-inspector-common [data-wsa-common]').forEach(field => {
+            common[field.dataset.wsaCommon] = field.type === 'checkbox' ? field.checked : field.value;
+        });
+        const params = {};
+        cat.params.forEach(param => {
+            const field = root?.querySelector(`[data-wsa-param="${param.key}"]`);
+            if (!field) return;
+            params[param.key] = field.type === 'checkbox' ? field.checked : field.value;
+        });
+
+        const [side, idxStr] = state.selectedPinKey.split(':');
+        try {
+            await api(`/api/accessories/arduino/boards/${board.id}/pins/${side}/${idxStr}`, {
+                method: 'PUT',
+                body: new URLSearchParams({ category, common: JSON.stringify(common), params: JSON.stringify(params) }),
+            });
+            pin.category = category;
+            pin.label = cat.label;
+            pin.common = common;
+            pin.params = params;
+            state.pendingCategory = null;
+            toast('Configuración aplicada.');
+            render();
+        } catch (e) {
+            toast(e.message || 'No se pudo guardar la configuración del pin.', 'error');
         }
-        state.pendingCategory = null;
-        toast('Configuración aplicada (mock -- todavía no hay backend real para esto).');
-        render();
     }
 
     function toggleRule(ruleId) {
@@ -571,9 +645,39 @@
             showAllPins: false,
             deviceInfo: info, // chip/firmware/relays/pwm_led/ws2812/wifi crudos, para mostrar datos reales
         });
-        if (!existing) state.boards.push(board);
+        if (!existing) {
+            state.boards.push(board);
+            persistNewlyDiscoveredBoard(board);
+        }
         state.activeBoardId = board.id;
         return board;
+    }
+
+    // Best-effort: persiste en el backend una placa recién adoptada por el
+    // asistente (antes quedaba solo en memoria) -- así, si el usuario le
+    // cambia la función a algún pin después, applyPinConfig() tiene un
+    // board.id real contra el cual guardar. No bloquea ni revierte el
+    // flujo del asistente si falla -- nunca interrumpir una operación real
+    // de hardware por un problema de persistencia.
+    async function persistNewlyDiscoveredBoard(board) {
+        try {
+            const created = await api('/api/accessories/arduino/boards', {
+                method: 'POST',
+                body: new URLSearchParams({
+                    catalog_id: board.catalogId,
+                    name: board.name,
+                    pins: JSON.stringify(board.pins),
+                    device: board.device || '',
+                    ip: board.ip || '',
+                }),
+            });
+            const oldId = board.id;
+            board.id = created.id;
+            if (state.activeBoardId === oldId) state.activeBoardId = created.id;
+        } catch (e) {
+            // Sin red o backend no disponible momentáneamente: la placa
+            // sigue funcionando en memoria, solo no persiste todavía.
+        }
     }
 
     async function wizardProbeWifi(ip, username, password) {
@@ -1101,7 +1205,8 @@
         const displayCategoryId = state.pendingCategory || pin.category;
         const cat = categoryInfo(displayCategoryId);
         const dirty = state.pendingCategory && state.pendingCategory !== pin.category;
-        const paramsHtml = cat.params.map(param => pinParamFieldHtml(param)).join('');
+        const common = pin.common || {};
+        const paramsHtml = cat.params.map(param => pinParamFieldHtml(param, (pin.params || {})[param.key])).join('');
         return `
             <h2>${icon(ICON_GEAR, 16)}Inspector de pin</h2>
             <div class="wsa-inspector-title"><strong>${esc(pin.gpio)}</strong><span>#${pin.physical}</span></div>
@@ -1114,21 +1219,32 @@
             <div class="wsa-category-badge" style="color:${cat.color}"><span style="background:${cat.color}"></span>${esc(cat.label)}${dirty ? ' <em>(sin aplicar)</em>' : ''}</div>
             ${!fixed ? `
             <div class="wsa-inspector-common">
-                <label><span>Modo</span><select><option>Salida</option><option>Entrada</option></select></label>
-                <label><span>Estado inicial</span><select><option>LOW (Apagado)</option><option>HIGH (Encendido)</option></select></label>
-                <label><span>Nivel lógico</span><select><option>3.3V</option><option>5V</option></select></label>
-                <label class="wsa-inline-toggle"><span>Invertir salida</span><label class="wsa-switch"><input type="checkbox"><span></span></label></label>
+                <label><span>Modo</span><select data-wsa-common="mode"><option${common.mode === 'Entrada' ? '' : ' selected'}>Salida</option><option${common.mode === 'Entrada' ? ' selected' : ''}>Entrada</option></select></label>
+                <label><span>Estado inicial</span><select data-wsa-common="initialState"><option${common.initialState === 'HIGH (Encendido)' ? '' : ' selected'}>LOW (Apagado)</option><option${common.initialState === 'HIGH (Encendido)' ? ' selected' : ''}>HIGH (Encendido)</option></select></label>
+                <label><span>Nivel lógico</span><select data-wsa-common="logicLevel"><option${common.logicLevel === '5V' ? '' : ' selected'}>3.3V</option><option${common.logicLevel === '5V' ? ' selected' : ''}>5V</option></select></label>
+                <label class="wsa-inline-toggle"><span>Invertir salida</span><label class="wsa-switch"><input type="checkbox" data-wsa-common="invertOutput"${common.invertOutput ? ' checked' : ''}><span></span></label></label>
             </div>` : '<p class="wsa-empty">Pin fijo del conector -- no configurable.</p>'}
             ${paramsHtml ? `<div class="wsa-param-title">Parámetros</div>${paramsHtml}` : ''}
             <button type="button" class="wsa-btn wsa-btn-accent wsa-btn-block" id="wsa-apply-pin" ${fixed ? 'disabled' : ''}>${icon(ICON_CHECK, 15)}<span>Aplicar configuración</span></button>`;
     }
 
-    function pinParamFieldHtml(param) {
+    function pinParamFieldHtml(param, currentValue) {
         const label = `<span>${esc(param.label)}</span>`;
-        if (param.type === 'select') return `<label>${label}<select>${param.options.map(o => `<option>${esc(o)}</option>`).join('')}</select></label>`;
-        if (param.type === 'slider') return `<label>${label}<input type="range" min="${param.min}" max="${param.max}" value="75"></label>`;
-        if (param.type === 'color') return `<label>${label}<input type="color" value="#34f58b"></label>`;
-        if (param.type === 'toggle') return `<label class="wsa-inline-toggle">${label}<label class="wsa-switch"><input type="checkbox"><span></span></label></label>`;
+        if (param.type === 'select') {
+            const val = currentValue !== undefined ? currentValue : param.options[0];
+            return `<label>${label}<select data-wsa-param="${param.key}">${param.options.map(o => `<option${o === val ? ' selected' : ''}>${esc(o)}</option>`).join('')}</select></label>`;
+        }
+        if (param.type === 'slider') {
+            const val = currentValue !== undefined ? currentValue : 75;
+            return `<label>${label}<input type="range" data-wsa-param="${param.key}" min="${param.min}" max="${param.max}" value="${esc(val)}"></label>`;
+        }
+        if (param.type === 'color') {
+            const val = currentValue !== undefined ? currentValue : '#34f58b';
+            return `<label>${label}<input type="color" data-wsa-param="${param.key}" value="${esc(val)}"></label>`;
+        }
+        if (param.type === 'toggle') {
+            return `<label class="wsa-inline-toggle">${label}<label class="wsa-switch"><input type="checkbox" data-wsa-param="${param.key}"${currentValue ? ' checked' : ''}><span></span></label></label>`;
+        }
         return '';
     }
 
@@ -1400,6 +1516,7 @@
         render();
         window.applySidebarOrder?.();
         checkSetupStatus();
+        loadBoardsFromBackend();
     }
 
     function unmount() {

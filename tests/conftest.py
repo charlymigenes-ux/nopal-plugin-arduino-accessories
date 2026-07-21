@@ -78,6 +78,7 @@ accessory_service = sys.modules[f"{_NAMESPACE}.pkg.services.accessory_service"]
 accessory_scenes = sys.modules[f"{_NAMESPACE}.pkg.services.accessory_scenes"]
 activity_log = sys.modules[f"{_NAMESPACE}.pkg.services.activity_log"]
 firmware_flash_service = sys.modules[f"{_NAMESPACE}.pkg.services.firmware_flash_service"]
+board_pinmap_service = sys.modules[f"{_NAMESPACE}.pkg.services.board_pinmap_service"]
 
 
 @pytest.fixture(scope="session")
@@ -127,4 +128,5 @@ def isolated_registries(tmp_path, monkeypatch):
     monkeypatch.setattr(accessory_scenes, "SCENES_PATH", tmp_path / "scenes.json")
     monkeypatch.setattr(activity_log, "LOG_PATH", tmp_path / "activity_log.json")
     monkeypatch.setattr(firmware_flash_service, "BUILDS_DIR", tmp_path / "builds")
+    monkeypatch.setattr(board_pinmap_service, "BOARDS_CONFIG_PATH", str(tmp_path / "arduino_boards_config.json"))
     yield tmp_path

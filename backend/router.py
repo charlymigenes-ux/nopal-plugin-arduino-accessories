@@ -18,6 +18,7 @@ from .services.accessory_service import (
     set_accessory_power,
     unregister_accessory,
 )
+from .services import board_pinmap_service
 from .services.activity_log import get_recent as get_recent_activity
 from .services.firmware_flash_service import (
     flash_via_ota,
@@ -71,6 +72,58 @@ async def accessory_arduino_probe_wifi_endpoint(
     board = await asyncio.get_event_loop().run_in_executor(None, probe_wifi_board, ip, username, password)
     if board is None:
         raise HTTPException(status_code=400, detail="No se encontró una placa NOPAL en esa IP con esas credenciales")
+    return board
+
+
+@router.get("/api/accessories/arduino/boards")
+async def arduino_boards_list_endpoint(user: dict = Depends(require_auth)):
+    """Placas agregadas a mano (catálogo + apodo) o adoptadas por el
+    asistente de firmware, con la función/parámetros que el usuario le
+    asignó a cada pin -- documentación/planificación real del mapa de
+    pines, ver board_pinmap_service.py. No cambia el comportamiento del
+    firmware, que sigue con roles de pin fijos de fábrica."""
+    return {"boards": board_pinmap_service.list_boards()}
+
+
+@router.post("/api/accessories/arduino/boards")
+async def arduino_boards_add_endpoint(
+    catalog_id: str = Form(...),
+    name: str = Form(...),
+    pins: str = Form(...),
+    device: str = Form(""),
+    ip: str = Form(""),
+    user: dict = Depends(require_role("admin")),
+):
+    """`pins` es el JSON {"left": [...], "right": [...]} tal cual lo arma
+    el catálogo del frontend -- el backend no interpreta su forma, solo la
+    persiste."""
+    try:
+        pins_data = json.loads(pins)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="El campo 'pins' no es un JSON válido")
+    return board_pinmap_service.add_board(catalog_id, name, pins_data, device or None, ip or None)
+
+
+@router.put("/api/accessories/arduino/boards/{board_id}/pins/{side}/{index}")
+async def arduino_boards_update_pin_endpoint(
+    board_id: str,
+    side: str,
+    index: int,
+    category: str = Form(...),
+    common: str = Form("{}"),
+    params: str = Form("{}"),
+    user: dict = Depends(require_role("admin")),
+):
+    if side not in ("left", "right"):
+        raise HTTPException(status_code=400, detail="'side' debe ser 'left' o 'right'")
+    try:
+        common_data = json.loads(common)
+        params_data = json.loads(params)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="'common' o 'params' no es un JSON válido")
+    board = board_pinmap_service.update_board_pin(board_id, side, index, category, common_data, params_data)
+    if board is None:
+        raise HTTPException(status_code=404, detail="Placa o pin no encontrado")
     return board
 
 

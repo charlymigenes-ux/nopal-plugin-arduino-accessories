@@ -8,6 +8,7 @@ from backend.auth_deps import require_auth, require_role
 from .services import accessory_scenes
 from .services.accessory_service import (
     discover_arduino_boards,
+    get_configured_boards_telemetry,
     get_accessories,
     get_accessories_status,
     get_driver_names,
@@ -86,6 +87,17 @@ async def arduino_boards_list_endpoint(user: dict = Depends(require_auth)):
     return {"boards": board_pinmap_service.list_boards()}
 
 
+@router.get("/api/accessories/arduino/telemetry")
+async def arduino_boards_telemetry_endpoint(user: dict = Depends(require_auth)):
+    """Estado real de las placas configuradas, por USB o WiFi.
+
+    Mantiene separado el mapa de pines persistido de la lectura que puede
+    fallar temporalmente cuando una placa está apagada.
+    """
+    boards = board_pinmap_service.list_boards()
+    return {"boards": await get_configured_boards_telemetry(boards)}
+
+
 @router.post("/api/accessories/arduino/boards")
 async def arduino_boards_add_endpoint(
     catalog_id: str = Form(...),
@@ -134,11 +146,21 @@ async def arduino_boards_update_info_endpoint(
     name: Optional[str] = Form(None),
     device: Optional[str] = Form(None),
     ip: Optional[str] = Form(None),
+    catalog_id: Optional[str] = Form(None),
+    pins: Optional[str] = Form(None),
     user: dict = Depends(require_role("admin")),
 ):
     """Edita nombre/puerto USB/IP de una placa ya agregada -- ver
     board_pinmap_service.update_board_info. No toca sus pines."""
-    board = board_pinmap_service.update_board_info(board_id, name, device, ip)
+    pins_data = None
+    if pins is not None:
+        try:
+            pins_data = json.loads(pins)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="'pins' no es un JSON válido")
+    board = board_pinmap_service.update_board_info(
+        board_id, name, device, ip, catalog_id, pins_data
+    )
     if board is None:
         raise HTTPException(status_code=404, detail="Placa no encontrada")
     return board

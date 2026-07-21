@@ -83,6 +83,8 @@ def update_board_info(
     name: Optional[str] = None,
     device: Optional[str] = None,
     ip: Optional[str] = None,
+    catalog_id: Optional[str] = None,
+    pins: Optional[Dict[str, List[Dict[str, Any]]]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Edita nombre/puerto USB/IP de una placa ya agregada -- no toca sus
     pines. Cada campo es opcional para poder editar uno solo sin pisar los
@@ -97,6 +99,10 @@ def update_board_info(
         board["device"] = device or None
     if ip is not None:
         board["ip"] = ip or None
+    if catalog_id is not None:
+        board["catalog_id"] = catalog_id
+    if pins is not None:
+        board["pins"] = pins
     _save_boards(boards)
     return board
 

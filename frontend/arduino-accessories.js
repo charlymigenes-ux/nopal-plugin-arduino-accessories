@@ -311,7 +311,13 @@
     }
 
     const state = {
-        view: 'pines', // overview | pines | scenes | leds | relays | sensors | automations | console | templates | alerts
+        view: 'overview', // overview | pines | scenes | leds | relays | sensors | automations | console | templates | alerts
+        overviewTab: 'relays',
+        accessories: [],
+        scenes: [],
+        activity: [],
+        boardTelemetry: [],
+        workshopLoading: true,
         // connected: true cuando la placa se confirmó de verdad por USB (ver
         // asistente de firmware) -- una placa "connected" muestra solo sus
         // pines firmwareDefault por default (showAllPins la destapa toda);
@@ -339,6 +345,7 @@
             builds: [],
             selectedBuild: null,
             uploading: false,
+            pendingBoardInfo: null,
             error: null,
         },
     };
@@ -382,6 +389,84 @@
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.detail || 'La operación no se pudo completar.');
         return data;
+    }
+
+    async function loadWorkshopData({ quiet = false } = {}) {
+        if (!quiet) state.workshopLoading = true;
+        try {
+            const [accessoriesData, scenesData, activityData, telemetryData] = await Promise.all([
+                api('/api/accessories/status'),
+                api('/api/accessories/scenes'),
+                api('/api/accessories/activity'),
+                api('/api/accessories/arduino/telemetry'),
+            ]);
+            state.accessories = accessoriesData.accessories || [];
+            state.scenes = scenesData.scenes || [];
+            state.activity = activityData.activity || [];
+            state.boardTelemetry = telemetryData.boards || [];
+        } catch (error) {
+            if (!quiet) toast(error.message || 'No se pudo cargar el estado del taller.', 'error');
+        } finally {
+            state.workshopLoading = false;
+            if (state.view === 'overview') render();
+        }
+    }
+
+    async function setWorkshopAccessoryPower(accessoryId, on) {
+        const accessory = state.accessories.find(item => item.id === accessoryId);
+        if (!accessory) return;
+        const previous = accessory.on;
+        accessory.on = on;
+        render();
+        try {
+            await api('/api/accessories/power', {
+                method: 'POST',
+                body: new URLSearchParams({ id: accessoryId, on: String(on) }),
+            });
+            toast(`${accessory.name}: ${on ? 'encendido' : 'apagado'}.`);
+            await loadWorkshopData({ quiet: true });
+        } catch (error) {
+            accessory.on = previous;
+            render();
+            toast(error.message || 'No se pudo cambiar el accesorio.', 'error');
+        }
+    }
+
+    function hexToRgb(hex) {
+        const normalized = String(hex || '').replace('#', '');
+        if (!/^[0-9a-f]{6}$/i.test(normalized)) return null;
+        return [0, 2, 4].map(offset => parseInt(normalized.slice(offset, offset + 2), 16));
+    }
+
+    function rgbToHex(rgb) {
+        if (!Array.isArray(rgb) || rgb.length !== 3) return '#57e04b';
+        return `#${rgb.map(value => Math.max(0, Math.min(255, Number(value) || 0)).toString(16).padStart(2, '0')).join('')}`;
+    }
+
+    async function setWorkshopLedColor(accessoryId, hex) {
+        const rgb = hexToRgb(hex);
+        if (!rgb) return;
+        try {
+            await api('/api/accessories/led', {
+                method: 'POST',
+                body: new URLSearchParams({ id: accessoryId, r: rgb[0], g: rgb[1], b: rgb[2] }),
+            });
+            toast('Color actualizado.');
+            await loadWorkshopData({ quiet: true });
+        } catch (error) {
+            toast(error.message || 'No se pudo cambiar la iluminación.', 'error');
+        }
+    }
+
+    async function runWorkshopScene(sceneId) {
+        const scene = state.scenes.find(item => item.id === sceneId);
+        try {
+            await api(`/api/accessories/scenes/${encodeURIComponent(sceneId)}/run`, { method: 'POST' });
+            toast(`Escena “${scene?.name || 'Taller'}” aplicada.`);
+            await loadWorkshopData({ quiet: true });
+        } catch (error) {
+            toast(error.message || 'No se pudo ejecutar la escena.', 'error');
+        }
     }
 
     function activeBoard() {
@@ -477,8 +562,8 @@
     // ============================================================================
 
     async function addBoardFromForm(form) {
-        const catalogId = form.querySelector('#wsa-addboard-model').value;
-        const name = form.querySelector('#wsa-addboard-name').value.trim();
+        const catalogId = form.querySelector('#wsa-wizard-manual-model').value;
+        const name = form.querySelector('#wsa-wizard-manual-name').value.trim();
         const entry = catalogEntry(catalogId);
         if (!entry) return toast('Elige un modelo.', 'error');
         if (!name) return toast('Ponle un nombre a la placa.', 'error');
@@ -490,7 +575,8 @@
             state.boards.push({ id: created.id, catalogId, name, pins: created.pins, connected: false, showAllPins: true });
             state.activeBoardId = created.id;
             state.selectedPinKey = null;
-            closeAddBoardPanel();
+            state.wizard.active = false;
+            state.view = 'pines';
             toast(`${name} (${entry.label}) se agregó.`);
             render();
         } catch (e) {
@@ -715,12 +801,33 @@
     // forma de saberlo así que se asume esp32_devkit (es el único de los 4
     // modelos con WiFi realmente ejercitado hasta ahora). Si en el futuro
     // el firmware reporta más detalle esto se afina.
-    function adoptDiscoveredBoard(info) {
+    function catalogIdForDiscoveredBoard(info) {
+        const identity = [info.board, info.chip, info.model, info.hostname, info.firmware]
+            .filter(Boolean).join(' ').toLowerCase().replace(/[\s-]+/g, '_');
+        if (/tcall|sim800l/.test(identity)) return 'tcall_v13';
+        if (/wemos|d1_?mini/.test(identity)) return 'wemos_d1_mini';
+        if (/nodemcu/.test(identity)) return 'nodemcu_v3';
+        if (/esp8266|esp_?12/.test(identity)) return 'esp8266_generic';
+        if (/esp32_devkit|esp32_wroom|esp32_d0wd|esp32/.test(identity)) return 'esp32_devkit';
+        return null;
+    }
+
+    function handleDiscoveredBoard(info) {
+        const catalogId = catalogIdForDiscoveredBoard(info);
+        if (!catalogId) {
+            state.wizard.pendingBoardInfo = info;
+            state.wizard.step = 'identify';
+            return null;
+        }
+        return adoptDiscoveredBoard(info, catalogId);
+    }
+
+    function adoptDiscoveredBoard(info, catalogId) {
         const key = info.device || info.ip;
-        const catalogId = /esp8266/i.test(info.chip || '') ? 'esp8266_generic' : 'esp32_devkit';
         const entry = catalogEntry(catalogId);
         const existing = state.boards.find(b => (b.device || b.ip) === key);
         const board = existing || { id: `board_${info.device ? 'usb' : 'wifi'}_${key}`, pins: clonePins(entry.pins) };
+        const profileChanged = existing && existing.catalogId !== catalogId;
         Object.assign(board, {
             catalogId,
             name: existing?.name || (info.device ? `Placa USB (${info.device})` : `Placa WiFi (${info.hostname || info.ip})`),
@@ -730,12 +837,31 @@
             showAllPins: false,
             deviceInfo: info, // chip/firmware/relays/pwm_led/ws2812/wifi crudos, para mostrar datos reales
         });
+        if (profileChanged) board.pins = clonePins(entry.pins);
         if (!existing) {
             state.boards.push(board);
             persistNewlyDiscoveredBoard(board);
+        } else if (profileChanged) {
+            persistDetectedBoardProfile(board);
         }
         state.activeBoardId = board.id;
         return board;
+    }
+
+    async function persistDetectedBoardProfile(board) {
+        try {
+            await api(`/api/accessories/arduino/boards/${encodeURIComponent(board.id)}`, {
+                method: 'PUT',
+                body: new URLSearchParams({
+                    catalog_id: board.catalogId,
+                    pins: JSON.stringify(board.pins),
+                    device: board.device || '',
+                    ip: board.ip || '',
+                }),
+            });
+        } catch (e) {
+            toast('Detectamos el modelo, pero no pudimos guardar el mapa corregido.', 'error');
+        }
     }
 
     // Best-effort: persiste en el backend una placa recién adoptada por el
@@ -775,8 +901,8 @@
                 method: 'POST',
                 body: new URLSearchParams({ ip, username: username || '', password: password || '' }),
             });
-            state.wizard.foundBoard = adoptDiscoveredBoard(board);
-            state.wizard.step = 'found';
+            state.wizard.foundBoard = handleDiscoveredBoard(board);
+            if (state.wizard.foundBoard) state.wizard.step = 'found';
         } catch (error) {
             state.wizard.step = 'wifi';
             state.wizard.error = error.message;
@@ -797,7 +923,10 @@
             const data = await api('/api/accessories/arduino/discover');
             const boards = data.boards || [];
             if (boards.length) {
-                boards.forEach(adoptDiscoveredBoard);
+                boards.forEach(info => {
+                    const catalogId = catalogIdForDiscoveredBoard(info);
+                    if (catalogId) adoptDiscoveredBoard(info, catalogId);
+                });
                 state.wizard.active = false;
             } else {
                 state.wizard.active = !wizardDismissed();
@@ -819,8 +948,8 @@
             const data = await api('/api/accessories/arduino/discover');
             const boards = data.boards || [];
             if (boards.length) {
-                state.wizard.foundBoard = adoptDiscoveredBoard(boards[0]);
-                state.wizard.step = 'found';
+                state.wizard.foundBoard = handleDiscoveredBoard(boards[0]);
+                if (state.wizard.foundBoard) state.wizard.step = 'found';
             } else {
                 state.wizard.step = 'notfound';
             }
@@ -885,8 +1014,8 @@
             const data = await api('/api/accessories/arduino/discover');
             const found = (data.boards || []).find(b => b.device === selectedPort);
             if (found) {
-                state.wizard.foundBoard = adoptDiscoveredBoard(found);
-                state.wizard.step = 'success';
+                state.wizard.foundBoard = handleDiscoveredBoard(found);
+                if (state.wizard.foundBoard) state.wizard.step = 'success';
             } else {
                 state.wizard.step = 'notfound';
                 state.wizard.error = 'El flasheo terminó pero la placa todavía no contesta -- puede necesitar más tiempo o un reset manual.';
@@ -906,6 +1035,18 @@
 
     function wizardFinish() {
         state.wizard.active = false;
+        state.view = 'pines';
+        state.selectedPinKey = null;
+        render();
+    }
+
+    function wizardUseIdentifiedModel() {
+        const model = root.querySelector('#wsa-wizard-identify-model')?.value;
+        const info = state.wizard.pendingBoardInfo;
+        if (!info || !catalogEntry(model)) return;
+        state.wizard.foundBoard = adoptDiscoveredBoard(info, model);
+        state.wizard.pendingBoardInfo = null;
+        state.wizard.step = 'found';
         render();
     }
 
@@ -957,18 +1098,6 @@
                 </div>
 
                 <footer class="wsa-statusbar" id="wsa-statusbar"></footer>
-
-                <div class="wsa-panel-overlay" id="wsa-addboard-panel" hidden>
-                    <div class="wsa-panel-backdrop" data-wsa-close-addboard></div>
-                    <form class="wsa-panel-dialog" id="wsa-addboard-form">
-                        <div class="wsa-panel-header"><span><strong>Agregar placa</strong><small>Elige el modelo y dale un nombre -- se crea su propia pestaña en Mapa de pines.</small></span><button type="button" data-wsa-close-addboard>×</button></div>
-                        <label><span>Modelo</span>
-                            <select id="wsa-addboard-model">${BOARD_CATALOG.map(b => `<option value="${b.id}">${esc(b.label)}</option>`).join('')}</select>
-                        </label>
-                        <label><span>Nombre / apodo</span><input type="text" id="wsa-addboard-name" maxlength="40" placeholder="Ej. Estación láser"></label>
-                        <div class="wsa-panel-actions"><button type="button" data-wsa-close-addboard>Cancelar</button><button type="submit" class="wsa-btn-accent">Agregar</button></div>
-                    </form>
-                </div>
 
                 <div class="wsa-panel-overlay" id="wsa-manageboards-panel" hidden>
                     <div class="wsa-panel-backdrop" data-wsa-close-manageboards></div>
@@ -1093,6 +1222,7 @@
                 <div class="wsa-wizard-actions">
                     <button type="button" class="wsa-btn wsa-btn-accent wsa-btn-block" id="wsa-wizard-search">${icon(ICON_ZAP, 15)}<span>Buscar por USB</span></button>
                     <button type="button" class="wsa-btn wsa-btn-block" id="wsa-wizard-wifi">${icon(ICON_ZAP, 15)}<span>Buscar por WiFi (IP)</span></button>
+                    <button type="button" class="wsa-btn wsa-btn-block" id="wsa-wizard-manual">Agregar manualmente</button>
                     <button type="button" class="wsa-btn wsa-btn-block" id="wsa-wizard-skip">Ya tengo una placa configurada / Saltar por ahora</button>
                 </div>
             </div></div>`;
@@ -1124,6 +1254,33 @@
                 <div class="wsa-spinner"></div>
                 <p>Buscando placas conectadas por USB…</p>
             </div></div>`;
+        }
+
+        if (w.step === 'identify') {
+            const info = w.pendingBoardInfo || {};
+            return `<div class="wsa-wizard"><div class="wsa-wizard-card">
+                <h2>Placa detectada: confirma el modelo</h2>
+                <p class="wsa-empty-note">La conexiÃ³n funciona, pero el firmware no reportÃ³ un identificador suficientemente preciso. Elige el modelo para cargar su mapa de pines correcto.</p>
+                ${wizardDeviceInfoHtml(info)}
+                <label><span>Modelo</span><select id="wsa-wizard-identify-model">${BOARD_CATALOG.map(b => `<option value="${b.id}">${esc(b.label)}</option>`).join('')}</select></label>
+                <div class="wsa-wizard-actions">
+                    <button type="button" class="wsa-btn wsa-btn-accent wsa-btn-block" id="wsa-wizard-identify-use">Usar este mapa de pines</button>
+                    <button type="button" class="wsa-btn wsa-btn-block" id="wsa-wizard-restart">Volver</button>
+                </div>
+            </div></div>`;
+        }
+
+        if (w.step === 'manual') {
+            return `<div class="wsa-wizard"><form class="wsa-wizard-card" id="wsa-wizard-manual-form">
+                <h2>Agregar placa manualmente</h2>
+                <p class="wsa-empty-note">Usa esta opciÃ³n sÃ³lo si la placa no puede identificarse por USB o WiFi.</p>
+                <label><span>Modelo</span><select id="wsa-wizard-manual-model">${BOARD_CATALOG.map(b => `<option value="${b.id}">${esc(b.label)}</option>`).join('')}</select></label>
+                <label><span>Nombre / apodo</span><input type="text" id="wsa-wizard-manual-name" maxlength="40" placeholder="Ej. EstaciÃ³n lÃ¡ser"></label>
+                <div class="wsa-wizard-actions">
+                    <button type="button" class="wsa-btn wsa-btn-accent wsa-btn-block" id="wsa-wizard-manual-add">Agregar con este mapa</button>
+                    <button type="button" class="wsa-btn wsa-btn-block" id="wsa-wizard-restart">Volver</button>
+                </div>
+            </form></div>`;
         }
 
         if (w.step === 'found') {
@@ -1194,18 +1351,93 @@
     }
 
     function viewOverview() {
-        const summary = pinSummary(activeBoard());
+        const board = activeBoard();
+        const entry = catalogEntry(board?.catalogId);
+        const liveBoard = state.boardTelemetry.find(item => item.id === board?.id);
+        const info = liveBoard?.telemetry || board?.deviceInfo || {};
+        const relays = state.accessories.filter(item => item.config?.relay != null || (item.kind !== 'led_strip' && !item.config?.led_mode));
+        const leds = state.accessories.filter(item => item.kind === 'led_strip' || item.config?.led_mode);
+        const activeCount = relays.filter(item => item.on === true).length;
+        const onlineCount = state.accessories.filter(item => item.on !== null).length;
+        const tabs = [
+            ['relays', 'Relés', ICON_PLUG], ['lights', 'Iluminación', ICON_LED],
+            ['sensors', 'Sensores', ICON_ACTIVITY], ['scenes', 'Escenas', ICON_SCENE],
+        ];
         return `
-            <div class="wsa-grid-3">
-                <div class="wsa-tile"><strong>${state.boards.length}</strong><span>Placas configuradas</span></div>
-                <div class="wsa-tile"><strong>${MACHINES.length}</strong><span>Máquinas con escenas</span></div>
-                <div class="wsa-tile"><strong>${state.rules.filter(r => r.enabled).length}/${state.rules.length}</strong><span>Reglas activas</span></div>
-                <div class="wsa-tile"><strong>${summary.assigned}</strong><span>Pines asignados</span></div>
+            <div class="wsa-workshop-head">
+                <div class="wsa-workshop-device"><div class="wsa-workshop-device-icon">${icon(ICON_CPU, 22)}</div><div>
+                    <h2>Control del taller</h2><p>${esc(board?.name || 'Sin placa')} · ${esc(entry?.label || board?.catalogId || 'Arduino / ESP32')}${info.firmware ? ` · Firmware ${esc(info.firmware)}` : ''}</p>
+                </div></div>
+                <div class="wsa-workshop-actions">
+                    <span class="wsa-status-pill"><span class="wsa-status-dot${onlineCount ? ' is-on' : ''}"></span>${onlineCount ? `${onlineCount} dispositivo(s) respondiendo` : 'Sin telemetría'}</span>
+                    <button type="button" class="wsa-btn" id="wsa-workshop-refresh">${icon(ICON_ACTIVITY, 14)}<span>Actualizar</span></button>
+                    <button type="button" class="wsa-btn" id="wsa-workshop-configure">${icon(ICON_GEAR, 14)}<span>Configurar placa</span></button>
+                </div>
             </div>
-            ${cardWrap('Máquinas del taller', ICON_SCENE, `<div class="wsa-machine-mini-list">${MACHINES.map(m => `
-                <div class="wsa-machine-mini-row"><span class="wsa-status-dot is-on"></span><div><strong>${esc(m.name)}</strong><small>${esc(m.nickname)}</small></div></div>`).join('')}</div>`)}
-            ${cardWrap('Actividad reciente', ICON_ACTIVITY, renderActivityListHtml())}
-            <p class="wsa-empty-note">Esta vista es un resumen de las demás secciones -- entra a "Mapa de pines" o "Escenas de máquina" para el detalle completo.</p>`;
+            <div class="wsa-workshop-stats">
+                <div class="wsa-card wsa-workshop-stat"><span>Salidas</span><strong>${activeCount} / ${relays.length}</strong><small>relés encendidos</small></div>
+                <div class="wsa-card wsa-workshop-stat"><span>Iluminación</span><strong>${leds.length ? `${leds.filter(item => item.on).length}/${leds.length} activa` : 'Sin tiras'}</strong><small>${leds[0]?.config?.led_mode ? esc(leds[0].config.led_mode.toUpperCase()) : 'PWM / WS2812'}</small></div>
+                <div class="wsa-card wsa-workshop-stat"><span>Placa</span><strong>${info.free_heap ? `${Math.round(info.free_heap / 1024)} KB` : (liveBoard?.online || board?.connected ? 'Conectada' : 'Pendiente')}</strong><small>${info.latency_ms != null ? `${info.latency_ms} ms` : (board?.ip || board?.device || 'Conecta por USB o WiFi')}</small></div>
+            </div>
+            <div class="wsa-workshop-tabs">${tabs.map(([id, label, tabIcon]) => `<button type="button" class="wsa-tab${state.overviewTab === id ? ' active' : ''}" data-wsa-overview-tab="${id}">${icon(tabIcon, 15)}<span>${label}</span></button>`).join('')}</div>
+            ${workshopOverviewPanel(relays, leds, board, info, liveBoard)}
+            <div class="wsa-workshop-activity">${icon(ICON_ACTIVITY, 14)}<span>${workshopLatestActivity()}</span></div>`;
+    }
+
+    function workshopOverviewPanel(relays, leds, board, info, liveBoard) {
+        if (state.workshopLoading) return '<div class="wsa-card wsa-workshop-loading"><div class="wsa-spinner"></div><p>Cargando el estado real del taller…</p></div>';
+        if (state.overviewTab === 'relays') return workshopRelaysPanel(relays);
+        if (state.overviewTab === 'lights') return workshopLightsPanel(leds);
+        if (state.overviewTab === 'sensors') return workshopSensorsPanel(board, info, liveBoard);
+        return workshopScenesPanel();
+    }
+
+    function workshopRelaysPanel(relays) {
+        if (!relays.length) return `<div class="wsa-card wsa-workshop-empty"><h2>${icon(ICON_PLUG, 16)}Salidas del taller</h2><p>No hay relés registrados todavía.</p><button type="button" class="wsa-btn wsa-btn-accent" id="wsa-workshop-add-accessory">${icon(ICON_PLUS, 14)}<span>Agregar accesorio</span></button></div>`;
+        return `<section class="wsa-card"><div class="wsa-card-title-row"><h2>${icon(ICON_PLUG, 16)}Salidas del taller</h2><button type="button" class="wsa-btn wsa-btn-small" id="wsa-workshop-add-accessory">${icon(ICON_PLUS, 13)}<span>Agregar</span></button></div>
+            <div class="wsa-table-scroll"><table class="wsa-table wsa-workshop-table"><thead><tr><th>Salida</th><th>Uso</th><th>Conexión</th><th>Estado</th></tr></thead><tbody>${relays.map(item => `<tr>
+                <td><strong>${esc(item.name)}</strong></td><td>${esc(item.kind || 'Accesorio')}</td>
+                <td><code>${esc(item.config?.transport === 'wifi' ? item.config?.ip : (item.config?.device || item.driver))}</code>${item.config?.relay != null ? ` · R${esc(item.config.relay)}` : ''}</td>
+                <td><div class="wsa-workshop-state-cell"><label class="wsa-switch"><input type="checkbox" data-wsa-workshop-power="${esc(item.id)}" ${item.on ? 'checked' : ''} ${item.on === null ? 'disabled' : ''}><span></span></label><small>${item.on === null ? 'Sin respuesta' : (item.on ? 'Encendido' : 'Apagado')}</small></div></td>
+            </tr>`).join('')}</tbody></table></div></section>`;
+    }
+
+    function workshopLightsPanel(leds) {
+        if (!leds.length) return `<div class="wsa-card wsa-workshop-empty"><h2>${icon(ICON_LED, 16)}Iluminación</h2><p>No hay tiras LED registradas todavía.</p><button type="button" class="wsa-btn wsa-btn-accent" id="wsa-workshop-add-accessory">${icon(ICON_PLUS, 14)}<span>Agregar tira LED</span></button></div>`;
+        return `<div class="wsa-workshop-led-grid">${leds.map(item => `<section class="wsa-card wsa-workshop-led">
+            <div class="wsa-card-title-row"><h2>${icon(ICON_LED, 16)}${esc(item.name)}</h2><span class="wsa-status-pill">${esc((item.config?.led_mode || 'LED').toUpperCase())}</span></div>
+            <label><span>Color</span><input type="color" data-wsa-workshop-led-color="${esc(item.id)}" value="${rgbToHex(item.config?.led_color)}"></label>
+            <button type="button" class="wsa-btn wsa-btn-accent" data-wsa-workshop-led-apply="${esc(item.id)}">Aplicar color</button>
+            <small>${esc(item.config?.transport === 'wifi' ? item.config?.ip : (item.config?.device || 'Placa NOPAL'))}</small>
+        </section>`).join('')}</div>`;
+    }
+
+    function workshopSensorsPanel(board, info, liveBoard) {
+        const metrics = [
+            ['Conexión de placa', liveBoard?.online || board?.connected ? 'En línea' : 'Sin confirmar', board?.ip || board?.device || 'No configurada'],
+            ['Latencia', info.latency_ms != null ? `${info.latency_ms} ms` : 'No reportada', 'Handshake NOPAL'],
+            ['Memoria libre', info.free_heap ? `${Math.round(info.free_heap / 1024)} KB` : 'No reportada', 'Heap disponible'],
+            ['WiFi', info.wifi_connected ? 'Conectado' : (info.wifi ? 'Disponible' : 'No reportado'), info.ip || board?.ip || 'Sin IP'],
+            ['Uptime', info.uptime_ms ? `${Math.floor(info.uptime_ms / 3600000)} h` : 'No reportado', 'Desde el último reinicio'],
+            ['Firmware', info.firmware || 'No reportado', info.hostname || 'Placa NOPAL'],
+            ['Entrada analógica', info.a0_raw != null ? `${info.a0_raw} RAW` : 'No reportada', info.a0_percent != null ? `${info.a0_percent}% · GPIO ${info.adc_gpio || '—'}` : 'ADC'],
+            ['Señal WiFi', info.rssi ? `${info.rssi} dBm` : 'No reportada', info.ssid || info.wifi_mode || 'Red local'],
+        ];
+        return `<section class="wsa-card"><div class="wsa-card-title-row"><h2>${icon(ICON_ACTIVITY, 16)}Telemetría de la placa</h2><small class="wsa-text-muted">Datos del último handshake real</small></div>
+            <div class="wsa-workshop-sensors">${metrics.map(([label, value, note]) => `<div><span>${esc(label)}</span><strong>${esc(value)}</strong><small>${esc(note)}</small></div>`).join('')}</div></section>`;
+    }
+
+    function workshopScenesPanel() {
+        if (!state.scenes.length) return `<div class="wsa-card wsa-workshop-empty"><h2>${icon(ICON_SCENE, 16)}Escenas</h2><p>Crea una escena para encender relés y ajustar luces con una sola acción.</p><button type="button" class="wsa-btn wsa-btn-accent" id="wsa-workshop-add-accessory">Ir a Accesorios</button></div>`;
+        return `<section class="wsa-card"><div class="wsa-card-title-row"><h2>${icon(ICON_SCENE, 16)}Acciones rápidas</h2><small class="wsa-text-muted">${state.scenes.length} escena(s)</small></div>
+            <div class="wsa-workshop-scenes">${state.scenes.map(scene => `<button type="button" class="wsa-btn" data-wsa-workshop-scene="${esc(scene.id)}">${icon(ICON_ZAP, 14)}<span>${esc(scene.name)}</span><small>${scene.actions?.length || 0} acción(es)</small></button>`).join('')}</div></section>`;
+    }
+
+    function workshopLatestActivity() {
+        const event = state.activity[0];
+        if (!event) return 'Sin actividad reciente en los accesorios.';
+        const labels = { power_on: 'encendido', power_off: 'apagado', led_color: 'cambió de color', scene_run: 'ejecutó una escena', registered: 'fue agregado', removed: 'fue eliminado' };
+        return `Última actividad: ${esc(event.name)} ${esc(labels[event.action] || event.action || '')} · ${formatRelativeTime(event.timestamp)}`;
     }
 
     // Con showAllPins=false (default para una placa `connected` de verdad),
@@ -1234,7 +1466,6 @@
                 </div>
                 <div class="wsa-boardbar-actions">
                     <button type="button" class="wsa-btn-icon" id="wsa-manageboards-btn" title="Gestionar placas">${icon(ICON_LAYOUT, 15)}</button>
-                    <button type="button" class="wsa-btn" id="wsa-connect-btn">${icon(ICON_ZAP, 14)}<span>Conectar placa (USB/WiFi)</span></button>
                 </div>
             </div>
 
@@ -1506,12 +1737,6 @@
     // EVENTOS
     // ============================================================================
 
-    function openAddBoardPanel() { root.querySelector('#wsa-addboard-panel').hidden = false; }
-    function closeAddBoardPanel() {
-        root.querySelector('#wsa-addboard-panel').hidden = true;
-        root.querySelector('#wsa-addboard-form').reset();
-    }
-
     function render() {
         if (!root) return;
         renderHeaderChips();
@@ -1528,9 +1753,6 @@
             if (btn) switchWorkshopView(btn.dataset.wsaView);
         });
 
-        root.querySelectorAll('[data-wsa-close-addboard]').forEach(el => el.addEventListener('click', closeAddBoardPanel));
-        root.querySelector('#wsa-addboard-form').addEventListener('submit', event => { event.preventDefault(); addBoardFromForm(event.target); });
-
         root.querySelectorAll('[data-wsa-close-manageboards]').forEach(el => el.addEventListener('click', closeManageBoardsPanel));
         root.querySelector('#wsa-manageboards-list').addEventListener('click', event => {
             const saveBtn = event.target.closest('[data-wsa-manageboard-save]');
@@ -1540,21 +1762,37 @@
         });
 
         root.querySelector('#wsa-content').addEventListener('click', event => {
+            const overviewTab = event.target.closest('[data-wsa-overview-tab]');
+            if (overviewTab) { state.overviewTab = overviewTab.dataset.wsaOverviewTab; render(); return; }
+            if (event.target.closest('#wsa-workshop-refresh')) { loadWorkshopData(); return; }
+            if (event.target.closest('#wsa-workshop-configure')) { switchWorkshopView('pines'); return; }
+            if (event.target.closest('#wsa-workshop-add-accessory')) {
+                window.switchSection?.('settings');
+                setTimeout(() => document.getElementById('accessories-settings-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 200);
+                return;
+            }
+            const ledApply = event.target.closest('[data-wsa-workshop-led-apply]');
+            if (ledApply) {
+                const color = root.querySelector(`[data-wsa-workshop-led-color="${CSS.escape(ledApply.dataset.wsaWorkshopLedApply)}"]`)?.value;
+                setWorkshopLedColor(ledApply.dataset.wsaWorkshopLedApply, color);
+                return;
+            }
+            const sceneButton = event.target.closest('[data-wsa-workshop-scene]');
+            if (sceneButton) { runWorkshopScene(sceneButton.dataset.wsaWorkshopScene); return; }
+
             const boardTab = event.target.closest('[data-wsa-board]');
             if (boardTab) { state.activeBoardId = boardTab.dataset.wsaBoard; state.selectedPinKey = null; render(); return; }
 
-            if (event.target.closest('#wsa-addboard-btn')) { openAddBoardPanel(); return; }
-            if (event.target.closest('#wsa-manageboards-btn')) { openManageBoardsPanel(); return; }
-
-            if (event.target.closest('#wsa-scan-btn')) { scanPins(); return; }
-
-            if (event.target.closest('#wsa-connect-btn')) {
+            if (event.target.closest('#wsa-addboard-btn')) {
                 state.wizard.active = true;
                 state.wizard.step = 'intro';
                 state.wizard.error = null;
                 render();
                 return;
             }
+            if (event.target.closest('#wsa-manageboards-btn')) { openManageBoardsPanel(); return; }
+
+            if (event.target.closest('#wsa-scan-btn')) { scanPins(); return; }
 
             const pinRow = event.target.closest('[data-wsa-pin]');
             if (pinRow) { const [side, idx] = pinRow.dataset.wsaPin.split(':'); selectPin(side, Number(idx)); return; }
@@ -1566,6 +1804,12 @@
             if (ruleToggle) { toggleRule(ruleToggle.dataset.wsaRule); return; }
 
             if (event.target.closest('#wsa-wizard-search')) { wizardSearch(); return; }
+            if (event.target.closest('#wsa-wizard-manual')) { state.wizard.step = 'manual'; render(); return; }
+            if (event.target.closest('#wsa-wizard-manual-add')) {
+                addBoardFromForm(root.querySelector('#wsa-wizard-manual-form'));
+                return;
+            }
+            if (event.target.closest('#wsa-wizard-identify-use')) { wizardUseIdentifiedModel(); return; }
             if (event.target.closest('#wsa-wizard-skip')) { wizardSkip(); return; }
             if (event.target.closest('#wsa-wizard-finish')) { wizardFinish(); return; }
             if (event.target.closest('#wsa-wizard-ports')) { wizardShowPorts(); return; }
@@ -1582,6 +1826,10 @@
         });
 
         root.querySelector('#wsa-content').addEventListener('change', event => {
+            if (event.target.matches('[data-wsa-workshop-power]')) {
+                setWorkshopAccessoryPower(event.target.dataset.wsaWorkshopPower, event.target.checked);
+                return;
+            }
             if (event.target.id === 'wsa-inspector-category') { setPendingCategory(event.target.value); return; }
             if (event.target.id === 'wsa-showall-pins') {
                 const board = activeBoard();
@@ -1624,6 +1872,7 @@
         window.applySidebarOrder?.();
         checkSetupStatus();
         loadBoardsFromBackend();
+        loadWorkshopData();
     }
 
     function unmount() {
@@ -1633,6 +1882,6 @@
     }
 
     window.NopalPluginRegistry = window.NopalPluginRegistry || {};
-    window.NopalPluginRegistry[PLUGIN_ID] = { mount, unmount, version: '2.0.0' };
+    window.NopalPluginRegistry[PLUGIN_ID] = { mount, unmount, version: '2.3.1' };
     mount();
 })();

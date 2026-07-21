@@ -274,7 +274,7 @@ def probe_wifi_board(ip: str, username: str, password: str) -> Optional[Dict[str
     try:
         response = requests.get(
             f"http://{ip}/api/status",
-            auth=(username, password),
+            auth=(username, password) if username or password else None,
             timeout=HTTP_TIMEOUT,
         )
         response.raise_for_status()
@@ -288,16 +288,38 @@ def probe_wifi_board(ip: str, username: str, password: str) -> Optional[Dict[str
 
     io = data.get("io", {})
     wifi = data.get("wifi", {})
-    return {
+    system = data.get("system", {})
+    led = data.get("led", {})
+    inputs = data.get("inputs", {})
+    relays = data.get("relays", [])
+    result = {
         "ip": ip,
         "firmware": data.get("firmware", ""),
-        "hostname": data.get("hostname", ""),
-        "relays": io.get("relays", 0),
+        "hostname": data.get("hostname") or wifi.get("hostname", ""),
+        "relays": io.get("relays", len(relays) if isinstance(relays, list) else 0),
         "pwm_led": bool(io.get("pwm_led")),
-        "ws2812": bool(io.get("ws2812")),
-        "ws2812_count": io.get("ws2812_count", 0),
+        "ws2812": bool(io.get("ws2812") or led.get("type") == "ws2812"),
+        "ws2812_count": io.get("ws2812_count", led.get("count", 0)),
         "wifi_connected": bool(wifi.get("connected")),
     }
+    optional = {
+        "board": data.get("board"),
+        "chip": data.get("chip"),
+        "protocol": data.get("protocol"),
+        "uptime_ms": data.get("uptime_ms", system.get("uptime_ms")),
+        "free_heap": data.get("free_heap", system.get("free_heap")),
+        "rssi": wifi.get("rssi"),
+        "ssid": wifi.get("ssid"),
+        "wifi_mode": wifi.get("mode"),
+        "a0_raw": inputs.get("a0_raw"),
+        "a0_percent": inputs.get("a0_percent"),
+        "adc_gpio": inputs.get("adc_gpio"),
+        "scene": led.get("scene"),
+        "led_effect": led.get("effect"),
+        "led_brightness": led.get("brightness"),
+    }
+    result.update({key: value for key, value in optional.items() if value is not None})
+    return result
 
 
 def release_arduino_connection(device: str) -> None:
@@ -441,8 +463,10 @@ def _parse_nopal_identification(line: str) -> Optional[Dict[str, Any]]:
         return None
     try:
         return {
+            "board": fields.get("board", ""),
             "chip": fields.get("chip", ""),
             "firmware": fields.get("fw", ""),
+            "protocol": int(fields.get("protocol", 0)),
             "relays": int(fields.get("relays", 0)),
             "pwm_led": fields.get("pwm_led") == "1",
             "ws2812": fields.get("ws2812") == "1",
@@ -456,6 +480,11 @@ def _parse_nopal_identification(line: str) -> Optional[Dict[str, Any]]:
             "ip": fields.get("ip", ""),
             "ota": fields.get("ota") == "1",
             "ota_path": fields.get("ota_path", ""),
+            "rssi": int(fields.get("rssi", 0)),
+            "analog_inputs": int(fields.get("analog_inputs", 0)),
+            "adc_gpio": int(fields.get("adc_pin", 0)),
+            "a0_raw": int(fields.get("a0_raw", 0)),
+            "scene": fields.get("scene", ""),
         }
     except ValueError:
         return None
@@ -599,6 +628,36 @@ async def discover_arduino_boards() -> List[Dict[str, Any]]:
     tomaron y el modelo/capacidades que declararon."""
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, _discover_arduino_boards_sync)
+
+
+def _probe_configured_board_sync(board: Dict[str, Any]) -> Dict[str, Any]:
+    """Lee telemetría de una placa persistida sin inventar valores.
+
+    Por USB reutiliza el handshake NOPAL protegido por lock. Por WiFi usa
+    /api/status, que el firmware deja público porque es de solo lectura.
+    """
+    info: Optional[Dict[str, Any]] = None
+    transport = ""
+    if board.get("device"):
+        transport = "usb"
+        info = _probe_nopal_board_sync(str(board["device"]), timeout=1.5)
+    elif board.get("ip"):
+        transport = "wifi"
+        info = probe_wifi_board(str(board["ip"]), "", "")
+    return {
+        "id": board.get("id"),
+        "name": board.get("name"),
+        "catalog_id": board.get("catalog_id"),
+        "transport": transport or None,
+        "online": info is not None,
+        "telemetry": info or {},
+    }
+
+
+async def get_configured_boards_telemetry(boards: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    loop = asyncio.get_event_loop()
+    tasks = [loop.run_in_executor(None, _probe_configured_board_sync, board) for board in boards]
+    return await asyncio.gather(*tasks) if tasks else []
 
 
 # ── Registro de accesorios (persistido) ──

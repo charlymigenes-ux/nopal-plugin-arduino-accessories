@@ -2,10 +2,10 @@
   "schema_version": 1,
   "id": "arduino-accessories",
   "name": "Automatización de Taller",
-  "version": "2.2.0",
+  "version": "2.3.1",
   "publisher": "NOPAL Labs",
   "category": "Accesorios",
-  "description": "Mapea los pines de tu placa Arduino/ESP32 y arma escenas de automatización por máquina (impresora, láser, CNC) sin depender de enchufes WiFi de terceros.",
+  "description": "Control unificado del taller para placas Arduino/ESP32: relés, iluminación, telemetría, escenas, mapas de pines y automatizaciones por máquina.",
   "permissions": ["Detectar puertos USB", "Enviar comandos a la placa", "Flashear firmware por USB u OTA"],
   "compatibility": ["Impresión 3D", "Láser", "CNC"],
   "frontend": {

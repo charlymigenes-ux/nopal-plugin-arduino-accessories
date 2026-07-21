@@ -175,6 +175,34 @@ class TestProbeWifiBoard:
         )
         assert accessory_service.probe_wifi_board("192.168.1.50", "u", "p") is None
 
+    def test_v3_dashboard_status_is_normalized_with_telemetry(self, monkeypatch):
+        status_json = {
+            "role": "accessory",
+            "board": "esp32_devkit_v1_30pin",
+            "chip": "ESP32-WROOM-32",
+            "firmware": "3.0.2",
+            "protocol": 3,
+            "wifi": {"connected": True, "hostname": "nopal-taller", "ssid": "Taller", "rssi": -58},
+            "relays": [{"n": number, "on": number == 1} for number in range(1, 9)],
+            "led": {"type": "ws2812", "count": 12, "brightness": 96, "effect": "SOLID", "scene": "READY"},
+            "inputs": {"adc_gpio": 34, "a0_raw": 2048, "a0_percent": 50},
+            "system": {"uptime_ms": 9000, "free_heap": 217000},
+        }
+        monkeypatch.setattr(
+            accessory_service.requests, "get",
+            lambda url, auth=None, timeout=None: _FakeResponse(json_data=status_json),
+        )
+
+        board = accessory_service.probe_wifi_board("192.168.1.50", "", "")
+
+        assert board["relays"] == 8
+        assert board["ws2812"] is True
+        assert board["ws2812_count"] == 12
+        assert board["free_heap"] == 217000
+        assert board["rssi"] == -58
+        assert board["a0_raw"] == 2048
+        assert board["scene"] == "READY"
+
     def test_unreachable_returns_none(self, monkeypatch):
         import requests
 

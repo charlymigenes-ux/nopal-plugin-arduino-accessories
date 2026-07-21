@@ -6,6 +6,15 @@ sin depender de enchufes WiFi de terceros. Incluye detección automática por
 USB, escenas (macros de varios accesorios a la vez), registro de actividad
 reciente y actualización de firmware por USB (esptool) u OTA.
 
+La portada **Control del taller** reúne el uso diario en una sola vista:
+estado real de relés, control RGB de iluminación, telemetría de cada placa,
+escenas persistidas y actividad reciente. El mapa de pines, flasheo,
+automatizaciones y consola permanecen disponibles como herramientas avanzadas.
+
+Desde la versión 2.3 también entiende el esquema de telemetría del firmware
+ESP32 DevKit V1 3.x (ocho relés, WS2812, ADC, WiFi, heap y uptime), además del
+formato clásico del firmware NOPAL 1.x/2.x.
+
 ## Instalación
 
 Desde NOPAL → Configuración → Galería de plugins → Accesorios Arduino/ESP32

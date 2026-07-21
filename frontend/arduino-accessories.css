@@ -410,6 +410,60 @@
 .wsa-machine-mini-row strong { font-size: .84rem; color: var(--text); display: block; }
 .wsa-machine-mini-row small { font-size: .72rem; color: var(--text-muted); }
 
+/* ── Control del taller: vista unificada de operación real ── */
+.wsa-workshop-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+}
+.wsa-workshop-device, .wsa-workshop-actions, .wsa-workshop-state-cell, .wsa-workshop-activity {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.wsa-workshop-device-icon {
+    width: 42px;
+    height: 42px;
+    display: grid;
+    place-items: center;
+    border: 1px solid rgba(var(--wsa-accent-rgb), .35);
+    border-radius: 12px;
+    background: rgba(var(--wsa-accent-rgb), .12);
+    color: var(--wsa-accent);
+}
+.wsa-workshop-device h2 { margin: 0; color: var(--text); font-size: 1.05rem; }
+.wsa-workshop-device p { margin: 3px 0 0; color: var(--text-muted); font-size: .78rem; }
+.wsa-workshop-actions { flex-wrap: wrap; justify-content: flex-end; }
+.wsa-workshop-actions .wsa-status-pill { display: inline-flex; align-items: center; gap: 6px; }
+.wsa-workshop-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.wsa-workshop-stat { display: flex; flex-direction: column; gap: 4px; }
+.wsa-workshop-stat > span { color: var(--text-muted); font-size: .74rem; }
+.wsa-workshop-stat strong { color: var(--text); font-size: 1.25rem; }
+.wsa-workshop-stat small { color: var(--text-muted); font-size: .72rem; }
+.wsa-workshop-tabs { display: flex; flex-wrap: wrap; gap: 7px; }
+.wsa-workshop-table td strong { color: var(--text); }
+.wsa-workshop-table code { color: var(--text-secondary); font-size: .73rem; }
+.wsa-workshop-state-cell small { min-width: 72px; color: var(--text-muted); }
+.wsa-workshop-led-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.wsa-workshop-led { display: flex; flex-direction: column; gap: 12px; }
+.wsa-workshop-led label { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--text-secondary); font-size: .8rem; }
+.wsa-workshop-led input[type="color"] { width: 52px; height: 34px; padding: 2px; border: 1px solid var(--wsa-border); border-radius: 8px; background: var(--wsa-control); }
+.wsa-workshop-led > small { color: var(--text-muted); }
+.wsa-workshop-sensors { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.wsa-workshop-sensors > div { display: flex; flex-direction: column; gap: 4px; padding: 10px 0; border-bottom: 1px solid var(--wsa-border); }
+.wsa-workshop-sensors span, .wsa-workshop-sensors small { color: var(--text-muted); font-size: .72rem; }
+.wsa-workshop-sensors strong { color: var(--text); font-size: .9rem; }
+.wsa-workshop-scenes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.wsa-workshop-scenes .wsa-btn { width: 100%; justify-content: flex-start; }
+.wsa-workshop-scenes .wsa-btn span { flex: 1; text-align: left; }
+.wsa-workshop-scenes .wsa-btn small { color: var(--text-muted); }
+.wsa-workshop-empty { text-align: center; }
+.wsa-workshop-empty h2 { justify-content: center; }
+.wsa-workshop-loading { display: flex; align-items: center; justify-content: center; gap: 12px; min-height: 120px; }
+.wsa-workshop-loading p { color: var(--text-muted); }
+.wsa-workshop-activity { color: var(--text-muted); font-size: .76rem; }
+
 /* ── Consola / Alertas ── */
 .wsa-console {
     background: #0b1220;
@@ -568,4 +622,13 @@
     .wsa-grid-2 { grid-template-columns: 1fr; }
     .wsa-grid-3 { grid-template-columns: repeat(2, 1fr); }
     .wsa-machine-cards { grid-template-columns: 1fr; }
+    .wsa-workshop-head { flex-direction: column; }
+    .wsa-workshop-actions { justify-content: flex-start; }
+    .wsa-workshop-sensors, .wsa-workshop-scenes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 560px) {
+    .wsa-workshop-stats, .wsa-workshop-sensors, .wsa-workshop-scenes { grid-template-columns: 1fr; }
+    .wsa-workshop-actions .wsa-btn { flex: 1; justify-content: center; }
+    .wsa-workshop-table th:nth-child(2), .wsa-workshop-table td:nth-child(2) { display: none; }
 }

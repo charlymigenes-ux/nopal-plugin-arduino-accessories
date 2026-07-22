@@ -79,6 +79,7 @@ accessory_scenes = sys.modules[f"{_NAMESPACE}.pkg.services.accessory_scenes"]
 activity_log = sys.modules[f"{_NAMESPACE}.pkg.services.activity_log"]
 firmware_flash_service = sys.modules[f"{_NAMESPACE}.pkg.services.firmware_flash_service"]
 board_pinmap_service = sys.modules[f"{_NAMESPACE}.pkg.services.board_pinmap_service"]
+machine_led_automation = sys.modules[f"{_NAMESPACE}.pkg.services.machine_led_automation"]
 
 
 @pytest.fixture(scope="session")
@@ -129,4 +130,6 @@ def isolated_registries(tmp_path, monkeypatch):
     monkeypatch.setattr(activity_log, "LOG_PATH", tmp_path / "activity_log.json")
     monkeypatch.setattr(firmware_flash_service, "BUILDS_DIR", tmp_path / "builds")
     monkeypatch.setattr(board_pinmap_service, "BOARDS_CONFIG_PATH", str(tmp_path / "arduino_boards_config.json"))
+    monkeypatch.setattr(machine_led_automation, "CONFIG_PATH", tmp_path / "machine_led_rules.json")
+    machine_led_automation._last_applied_state.clear()
     yield tmp_path

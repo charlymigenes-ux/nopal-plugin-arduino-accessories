@@ -5,7 +5,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
 from backend.auth_deps import require_auth, require_role
-from .services import accessory_scenes
+from .services import accessory_scenes, machine_led_automation
 from .services.accessory_service import (
     discover_arduino_boards,
     get_configured_boards_telemetry,
@@ -249,6 +249,54 @@ async def accessory_led_endpoint(
     if not result:
         raise HTTPException(status_code=502, detail="No se pudo cambiar el color")
     return {"success": True}
+
+
+@router.get("/api/accessories/machine-led/config")
+async def machine_led_config_endpoint(
+    machine_type: str,
+    machine_id: str,
+    user: dict = Depends(require_auth),
+):
+    """Configuración de alertas visuales de una máquina y destinos LED reales."""
+    if machine_type not in machine_led_automation.MACHINE_TYPES or not machine_id:
+        raise HTTPException(status_code=400, detail="Máquina no válida")
+    return machine_led_automation.get_config_payload(machine_type, machine_id)
+
+
+@router.post("/api/accessories/machine-led/config")
+async def machine_led_save_config_endpoint(
+    machine_type: str = Form(...),
+    machine_id: str = Form(...),
+    machine_name: str = Form(""),
+    enabled: bool = Form(False),
+    accessory_id: str = Form(...),
+    start: int = Form(0),
+    count: int = Form(...),
+    colors: str = Form(...),
+    user: dict = Depends(require_role("admin")),
+):
+    try:
+        colors_data = json.loads(colors)
+        if not isinstance(colors_data, dict):
+            raise ValueError("Los colores no tienen el formato esperado")
+        return machine_led_automation.save_config(
+            machine_type, machine_id, machine_name, enabled,
+            accessory_id, start, count, colors_data,
+        )
+    except (json.JSONDecodeError, ValueError) as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+
+@router.post("/api/accessories/machine-led/state")
+async def machine_led_state_endpoint(
+    machine_type: str = Form(...),
+    machine_id: str = Form(...),
+    state: str = Form(...),
+    user: dict = Depends(require_auth),
+):
+    if machine_type not in machine_led_automation.MACHINE_TYPES or not machine_id:
+        raise HTTPException(status_code=400, detail="Máquina no válida")
+    return await machine_led_automation.apply_state(machine_type, machine_id, state)
 
 
 @router.post("/api/accessories/rename")

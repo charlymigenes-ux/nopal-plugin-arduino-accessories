@@ -804,3 +804,60 @@ async def set_accessory_led_color(accessory_id: str, red: int, green: int, blue:
         _save_registry(entries)
         log_event(entry["id"], entry["name"], "led_color", {"color": [red, green, blue]})
     return ok
+
+
+async def set_accessory_led_segment(
+    accessory_id: str, start: int, count: int, red: int, green: int, blue: int
+) -> Optional[bool]:
+    """Cambia una porción de una tira sin fingir soporte en firmware viejo.
+
+    Protocolo 3 solo entiende color para la tira completa. Protocolo 4 agrega
+    ``start``/``count`` en WiFi y ``NOPAL:WSSEG`` por serie. Si la selección
+    abarca toda la tira reutilizamos el comando histórico, compatible con
+    ambas versiones.
+    """
+    entries = _load_registry()
+    entry = next((item for item in entries if item.get("id") == accessory_id), None)
+    if entry is None:
+        return None
+    config = entry.get("config") or {}
+    if entry.get("driver") != "arduino" or not config.get("led_mode"):
+        return None
+
+    start, count = int(start), int(count)
+    led_count = int(config.get("led_count") or config.get("ws2812_count") or 0)
+    if start < 0 or count < 1 or (led_count and start + count > led_count):
+        return False
+    whole_strip = start == 0 and (not led_count or count >= led_count)
+    if whole_strip:
+        return await set_accessory_led_color(accessory_id, red, green, blue)
+
+    protocol = int(config.get("protocol") or 0)
+    if not (config.get("segment_capable") or protocol >= 4):
+        return False
+    if config.get("led_mode") != "ws2812":
+        return False
+
+    if config.get("transport") == "wifi":
+        response = await asyncio.get_event_loop().run_in_executor(
+            None,
+            _arduino_http_request,
+            config,
+            "POST",
+            "/api/led",
+            {"mode": "ws2812", "start": start, "count": count, "r": red, "g": green, "b": blue},
+        )
+    else:
+        command = f"NOPAL:WSSEG:{start},{count},{red},{green},{blue}"
+        response = await asyncio.get_event_loop().run_in_executor(None, _arduino_send_command, config, command)
+    ok = response == "OK"
+    if ok:
+        segments = dict(config.get("led_segments") or {})
+        segments[f"{start}:{count}"] = [red, green, blue]
+        config["led_segments"] = segments
+        entry["config"] = config
+        _save_registry(entries)
+        log_event(entry["id"], entry["name"], "led_segment", {
+            "start": start, "count": count, "color": [red, green, blue]
+        })
+    return ok

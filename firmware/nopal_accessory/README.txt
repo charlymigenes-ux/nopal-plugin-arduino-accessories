@@ -19,7 +19,10 @@ FUNCIONES
 ---------
 - Hasta 4 relés (NOPAL:R1..R4).
 - Tira RGB analógica por PWM (NOPAL:LED:r,g,b).
-- Tira WS2812 / NeoPixel (NOPAL:WS:r,g,b).
+- Tira WS2812 / NeoPixel completa (NOPAL:WS:r,g,b).
+- Protocolo 4: zonas independientes de la tira
+  (NOPAL:WSSEG:inicio,cantidad,r,g,b). El mismo control está disponible por
+  POST /api/led con mode=ws2812, start, count, r, g y b.
 - Wi-Fi en modo estación con reconexión automática.
 - Punto de acceso de recuperación (NOPAL-XXXXXX) si no hay credenciales
   configuradas o si falla la conexión al Wi-Fi de casa/taller.
@@ -49,8 +52,9 @@ CONFIGURACIÓN
    - NOPAL_OTA_USERNAME
    - NOPAL_OTA_PASSWORD
    - NOPAL_AP_PASSWORD
-3. Ajusta los pines de RELAY_PINS / PWM_LED_PIN_* / WS2812_PIN dentro de
-   nopal_accessory.ino según tu cableado real.
+3. El perfil ESP32 DevKit V1 incluido usa NeoPixel en GPIO23 y 8 LEDs.
+   Ajusta RELAY_PINS / PWM_LED_PIN_* / WS2812_PIN / WS2812_COUNT dentro de
+   nopal_accessory.ino si tu cableado real es diferente.
 4. Carga la primera versión por USB (Sketch -> Subir).
 
 Si algún día quieres actualizar el firmware SIN cable, usa ElegantOTA (ver
@@ -65,7 +69,7 @@ Después del arranque revisa el monitor Serial para conocer la IP asignada
 Panel:
 - http://IP/           -> redirige a /update
 - http://IP/update      -> panel de ElegantOTA (pide usuario/clave)
-- http://IP/api/status  -> estado en JSON (wifi/ota/io)
+- http://IP/api/status  -> estado en JSON (firmware/protocolo/wifi/ota/io)
 - http://<hostname>.local/update  (si tu red soporta mDNS)
 
 Si el Wi-Fi falla, la placa levanta su propia red:
@@ -98,6 +102,10 @@ NOPAL:R1:OFF
 NOPAL:R1?
 NOPAL:LED:255,0,0
 NOPAL:WS:0,255,0
+NOPAL:WSSEG:0,4,255,80,0
+
+NOPAL:ID? y /api/status reportan protocol=4. NOPAL usa ese dato para
+habilitar repartos como 4+4, 3+5 o 2+6 sin volver a registrar la tira.
 
 VARIANTE EXPERIMENTAL: SIM800L
 --------------------------------

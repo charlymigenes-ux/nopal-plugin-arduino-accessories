@@ -374,6 +374,7 @@
     const ICON_CHECK = '<path d="M20 6 9 17l-5-5"/>';
     const ICON_ACTIVITY = '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>';
     const ICON_FOLDER = '<path d="M4 4h6l2 3h8a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Z"/>';
+    const ICON_BOOK = '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V5H6.5A2.5 2.5 0 0 0 4 7.5z"/><path d="M12 5v12"/>';
 
     // ============================================================================
     // AUXILIARES
@@ -513,6 +514,14 @@
         if (minutes < 60) return `Hace ${minutes} min`;
         const hours = Math.floor(minutes / 60);
         return `Hace ${hours} h`;
+    }
+
+    function formatDuration(milliseconds) {
+        const totalMinutes = Math.max(0, Math.floor(Number(milliseconds || 0) / 60000));
+        const days = Math.floor(totalMinutes / 1440);
+        const hours = Math.floor((totalMinutes % 1440) / 60);
+        const minutes = totalMinutes % 60;
+        return `${days}d ${String(hours).padStart(2, '0')}h ${String(minutes).padStart(2, '0')}m`;
     }
 
     // `rowCount` = la cantidad de filas de pines visibles a los costados
@@ -1077,10 +1086,16 @@
         return `
             <section id="arduino-accessories-section" class="view-section wsa-section" style="display:none">
                 <header class="wsa-header">
-                    <div class="wsa-header-icon">${icon(ICON_CPU, 26)}</div>
+                    <div class="wsa-header-icon">${icon(ICON_CPU, 34)}</div>
                     <div class="wsa-header-copy">
-                        <h1>Automatización de Taller</h1>
-                        <span class="wsa-header-sub">Controla escenas y dispositivos del taller por máquina</span>
+                        <h1>Accesorios Arduino/ESP32</h1>
+                        <span class="wsa-header-sub"><strong>NOPAL Labs</strong> · v2.4.0</span>
+                    </div>
+                    <span class="wsa-header-online" id="wsa-header-online"><span class="wsa-status-dot"></span>Comprobando…</span>
+                    <div class="wsa-header-actions">
+                        <button type="button" class="wsa-btn" id="wsa-docs-btn">${icon(ICON_BOOK, 15)}<span>Documentación</span></button>
+                        <button type="button" class="wsa-btn" id="wsa-config-btn">${icon(ICON_GEAR, 15)}<span>Configuración</span></button>
+                        <button type="button" class="wsa-btn-icon" id="wsa-manage-header-btn" title="Gestionar placas">•••</button>
                     </div>
                     <div class="wsa-header-chips" id="wsa-header-chips"></div>
                     <button type="button" class="wsa-btn-icon" id="wsa-close-btn" title="Cerrar">${icon(ICON_CLOSE, 16)}</button>
@@ -1112,28 +1127,17 @@
     function renderHeaderChips() {
         const board = activeBoard();
         const entry = catalogEntry(board.catalogId);
-        const summary = pinSummary(board);
+        const live = state.boardTelemetry.find(item => item.id === board.id);
+        const info = live?.telemetry || board.deviceInfo || {};
+        const online = Boolean(live?.online || board.connected);
         root.querySelector('#wsa-header-chips').innerHTML = `
-            <div class="wsa-chip">
-                <label><span class="wsa-status-dot is-on"></span>DISPOSITIVO CONECTADO</label>
-                <strong>${esc(entry?.label || board.catalogId)}</strong>
-                <small>${esc(board.name)}</small>
-            </div>
-            <div class="wsa-chip">
-                <label>PERFIL ACTIVO</label>
-                <strong>${esc(state.profile.name)}</strong>
-                <small>${esc(state.profile.version)}</small>
-            </div>
-            <div class="wsa-chip">
-                <label>${icon(ICON_CHECK, 13)} ESTADO DEL TALLER</label>
-                <strong>${summary.warnings ? 'Con advertencias' : 'Todo en orden'}</strong>
-                <small>${state.boards.length} placa(s) · ${MACHINES.length} máquinas activas</small>
-            </div>
-            <div class="wsa-chip wsa-chip-alert">
-                <label>${icon(ICON_BELL, 13)} ALERTAS</label>
-                <strong>${summary.warnings}</strong>
-                <small>${summary.warnings === 1 ? 'advertencia' : 'advertencias'}</small>
-            </div>`;
+            <div class="wsa-chip"><label>Placa</label><strong>${esc(info.chip || entry?.chipLabel || entry?.label || board.catalogId)}</strong></div>
+            <div class="wsa-chip"><label>${board.ip ? 'IP local' : 'Puerto USB'}</label><strong>${esc(board.ip || board.device || '—')}</strong></div>
+            <div class="wsa-chip"><label>Uptime</label><strong>${info.uptime_ms ? esc(formatDuration(info.uptime_ms)) : '—'}</strong></div>
+            <div class="wsa-chip"><label>Firmware</label><strong>${info.firmware ? `v${esc(info.firmware)}` : '—'}</strong></div>`;
+        const onlineEl = root.querySelector('#wsa-header-online');
+        onlineEl.classList.toggle('is-online', online);
+        onlineEl.innerHTML = `<span class="wsa-status-dot${online ? ' is-on' : ''}"></span>${online ? 'Activo y conectado' : 'Sin conexión confirmada'}`;
     }
 
     function renderSubnav() {
@@ -1171,6 +1175,7 @@
         if (state.wizard.active) { content.innerHTML = viewWizard(); return; }
         switch (state.view) {
             case 'overview': content.innerHTML = viewOverview(); break;
+            case 'documentation': content.innerHTML = viewDocumentation(); break;
             case 'pines': content.innerHTML = viewPinMap(); break;
             case 'scenes': content.innerHTML = viewScenes(); break;
             case 'leds': content.innerHTML = viewFilteredPins('led_ws2812,led_pwm', 'LEDs', 'Tiras y LEDs PWM asignados en todas tus placas.'); break;
@@ -1358,30 +1363,103 @@
         const relays = state.accessories.filter(item => item.config?.relay != null || (item.kind !== 'led_strip' && !item.config?.led_mode));
         const leds = state.accessories.filter(item => item.kind === 'led_strip' || item.config?.led_mode);
         const activeCount = relays.filter(item => item.on === true).length;
-        const onlineCount = state.accessories.filter(item => item.on !== null).length;
+        const relayCount = Number(info.relays || relays.length || 0);
+        const ledCount = Number(info.ws2812_count || leds.length || 0);
+        const online = Boolean(liveBoard?.online || board?.connected);
+        const rssi = info.rssi != null ? `${info.rssi} dBm` : 'No reportada';
         const tabs = [
-            ['relays', 'Relés', ICON_PLUG], ['lights', 'Iluminación', ICON_LED],
-            ['sensors', 'Sensores', ICON_ACTIVITY], ['scenes', 'Escenas', ICON_SCENE],
+            ['relays', 'Relés'], ['lights', 'Tiras LED'], ['inputs', 'Entradas'],
+            ['sensors', 'Sensores'], ['scenes', 'Macros'],
         ];
         return `
-            <div class="wsa-workshop-head">
-                <div class="wsa-workshop-device"><div class="wsa-workshop-device-icon">${icon(ICON_CPU, 22)}</div><div>
-                    <h2>Control del taller</h2><p>${esc(board?.name || 'Sin placa')} · ${esc(entry?.label || board?.catalogId || 'Arduino / ESP32')}${info.firmware ? ` · Firmware ${esc(info.firmware)}` : ''}</p>
-                </div></div>
-                <div class="wsa-workshop-actions">
-                    <span class="wsa-status-pill"><span class="wsa-status-dot${onlineCount ? ' is-on' : ''}"></span>${onlineCount ? `${onlineCount} dispositivo(s) respondiendo` : 'Sin telemetría'}</span>
-                    <button type="button" class="wsa-btn" id="wsa-workshop-refresh">${icon(ICON_ACTIVITY, 14)}<span>Actualizar</span></button>
-                    <button type="button" class="wsa-btn" id="wsa-workshop-configure">${icon(ICON_GEAR, 14)}<span>Configurar placa</span></button>
-                </div>
+            <div class="wsa-classic-dashboard">
+                <section class="wsa-classic-panel wsa-classic-summary">
+                    <h2>${icon(ICON_ACTIVITY, 17)}Resumen del sistema</h2>
+                    <div class="wsa-classic-metrics">
+                        <article>${icon(ICON_LAYOUT, 34)}<strong>${relayCount || '—'}</strong><span>Relés</span><small>${activeCount} activos</small></article>
+                        <article class="is-yellow">${icon(ICON_LED, 34)}<strong>${ledCount || '—'}</strong><span>Tiras LED</span><small>${leds.filter(item => item.on).length} activas</small></article>
+                        <article class="is-blue">${icon(ICON_ZAP, 34)}<span>Conectividad</span><strong class="is-word">${board?.ip ? 'WiFi' : (board?.device ? 'USB' : '—')}</strong><small>Señal: ${esc(rssi)}</small></article>
+                        <article class="is-purple">${icon(ICON_CHECK, 34)}<span>Estado</span><strong class="is-word">${online ? 'Óptimo' : 'Pendiente'}</strong><small>${online ? 'Telemetría real' : 'Sin respuesta'}</small></article>
+                    </div>
+                </section>
+
+                <section class="wsa-classic-panel wsa-classic-power">
+                    <h2>${icon(ICON_ZAP, 17)}Consumo y voltaje</h2>
+                    <div class="wsa-classic-power-values"><div><span>Entrada ADC GPIO${esc(info.adc_gpio || '—')}</span><strong>${info.a0_raw != null ? `${esc(info.a0_raw)} RAW` : '—'}</strong><small>${info.a0_percent != null ? `${esc(info.a0_percent)}% del rango` : 'Sin lectura'}</small></div><div><span>Consumo actual</span><strong>—</strong><small>Sensor no instalado</small></div></div>
+                    <div class="wsa-classic-signal"><i style="width:${Math.max(0, Math.min(100, Number(info.a0_percent || 0)))}%"></i></div>
+                    <p>Lectura instantánea del ADC; NOPAL no inventa historial ni amperaje.</p>
+                </section>
+
+                <section class="wsa-classic-panel wsa-classic-connection">
+                    <h2>${icon(ICON_ZAP, 17)}Estado de conexión</h2>
+                    <ul><li><i class="${online ? 'on' : ''}"></i><span>Placa</span><strong>${online ? 'Conectada' : 'Sin respuesta'}</strong></li><li><i class="${info.wifi_connected ? 'on' : ''}"></i><span>WiFi${info.ssid ? ` (${esc(info.ssid)})` : ''}</span><strong>${info.wifi_connected ? esc(rssi) : 'No reportado'}</strong></li><li><i class="${online ? 'on' : ''}"></i><span>API / USB</span><strong>${online ? 'Disponible' : 'Pendiente'}</strong></li><li><i class="${online ? 'on' : ''}"></i><span>Tiempo de respuesta</span><strong>${info.latency_ms != null ? `${esc(info.latency_ms)} ms` : '—'}</strong></li></ul>
+                    <button type="button" class="wsa-btn wsa-btn-block" id="wsa-workshop-refresh">${icon(ICON_ACTIVITY, 14)}Probar conexión</button>
+                </section>
+
+                <section class="wsa-classic-panel wsa-classic-controls">
+                    <div class="wsa-classic-panel-head"><h2>${icon(ICON_LAYOUT, 17)}Dispositivos y controles</h2><button type="button" class="wsa-btn" id="wsa-classic-quick">${icon(ICON_ZAP, 14)}Acciones rápidas</button></div>
+                    <nav class="wsa-classic-tabs">${tabs.map(([id, label]) => `<button type="button" class="${state.overviewTab === id ? 'active' : ''}" data-wsa-overview-tab="${id}">${esc(label)}</button>`).join('')}</nav>
+                    ${classicControlPanel(relays, leds, board, info, liveBoard)}
+                </section>
+
+                <section class="wsa-classic-panel wsa-classic-activity">
+                    <h2>${icon(ICON_ACTIVITY, 17)}Actividad reciente</h2>
+                    ${classicActivityHtml()}
+                </section>
+
+                <section class="wsa-classic-panel wsa-classic-scenes">
+                    <h2>${icon(ICON_SCENE, 17)}Macros y escenas</h2>
+                    <div>${state.scenes.length ? state.scenes.map(scene => `<button type="button" class="wsa-btn" data-wsa-workshop-scene="${esc(scene.id)}">${icon(ICON_ZAP, 14)}${esc(scene.name)}</button>`).join('') : '<span class="wsa-empty">No hay escenas guardadas.</span>'}</div>
+                </section>
+
+                <section class="wsa-classic-panel wsa-classic-device">
+                    <h2>${icon(ICON_CPU, 17)}Información del dispositivo</h2>
+                    <div class="wsa-classic-device-body"><dl><dt>Modelo</dt><dd>${esc(info.chip || entry?.chipLabel || entry?.label || '—')}</dd><dt>Placa</dt><dd>${esc(info.board || board?.catalogId || '—')}</dd><dt>Conexión</dt><dd>${esc(board?.ip || board?.device || '—')}</dd><dt>Firmware</dt><dd>${info.firmware ? `v${esc(info.firmware)}` : '—'}</dd></dl><div><span>Memoria libre</span><strong>${info.free_heap ? `${Math.round(info.free_heap / 1024)} KB` : 'No disponible'}</strong><i><em style="width:${info.free_heap ? '63%' : '0%'}"></em></i><span>Perfil de pines</span><strong>${esc(entry?.label || 'Sin perfil')}</strong></div></div>
+                </section>
+            </div>`;
+    }
+
+    function classicControlPanel(relays, leds, board, info, liveBoard) {
+        if (state.workshopLoading) return '<div class="wsa-classic-loading"><div class="wsa-spinner"></div><span>Leyendo la placa…</span></div>';
+        if (state.overviewTab === 'relays') {
+            const count = Math.max(relays.length, Number(info.relays || 0));
+            if (!count) return '<div class="wsa-classic-empty">La placa no reportó relés. Revisa la conexión o la configuración.</div>';
+            return `<div class="wsa-classic-relays">${Array.from({ length: count }, (_, index) => {
+                const item = relays[index];
+                return `<article>${icon(ICON_PLUG, 22)}<p><strong>${esc(item?.name || `Relé ${index + 1}`)}</strong><span>${item ? esc(item.kind || `Salida ${index + 1}`) : 'Sin registrar en NOPAL'}</span></p>${item ? `<label class="wsa-switch"><input type="checkbox" data-wsa-workshop-power="${esc(item.id)}" ${item.on ? 'checked' : ''} ${item.on === null ? 'disabled' : ''}><span></span></label>` : '<span class="wsa-classic-unassigned">Configurar</span>'}</article>`;
+            }).join('')}</div><footer class="wsa-classic-control-footer"><span><i class="on"></i>${relays.filter(item => item.on).length} activos</span><span>${Math.max(0, count - relays.filter(item => item.on).length)} inactivos</span><button type="button" class="wsa-btn" id="wsa-workshop-add-accessory">Editar relés</button></footer>`;
+        }
+        if (state.overviewTab === 'lights') return workshopLightsPanel(leds);
+        if (state.overviewTab === 'inputs') return `<div class="wsa-classic-telemetry"><article><span>Entrada</span><strong>GPIO${esc(info.adc_gpio || '—')} · ADC1</strong><small>Compatible con WiFi</small></article><article><span>Lectura RAW</span><strong>${info.a0_raw ?? '—'}</strong><small>12 bits · 0–4095</small></article><article><span>Porcentaje</span><strong>${info.a0_percent != null ? `${esc(info.a0_percent)}%` : '—'}</strong><small>Del rango ADC</small></article><article><span>Transporte</span><strong>${esc(liveBoard?.transport?.toUpperCase() || (board.ip ? 'WIFI' : 'USB'))}</strong><small>${esc(board.ip || board.device || 'Sin configurar')}</small></article></div>`;
+        if (state.overviewTab === 'sensors') return workshopSensorsPanel(board, info, liveBoard);
+        return workshopScenesPanel();
+    }
+
+    function classicActivityHtml() {
+        if (!state.activity.length) return '<p class="wsa-classic-empty">Sin actividad reciente.</p>';
+        return `<ul>${state.activity.slice(0, 5).map(event => `<li>${icon(ICON_ACTIVITY, 15)}<span>${esc(event.name)} · ${esc(event.action || 'evento')}</span><time>${formatRelativeTime(event.timestamp)}</time></li>`).join('')}</ul><button type="button" class="wsa-btn wsa-btn-block" data-wsa-view="console">Ver historial completo</button>`;
+    }
+
+    function viewDocumentation() {
+        const board = activeBoard();
+        const entry = catalogEntry(board.catalogId);
+        const pins = [...(board.pins?.left || []), ...(board.pins?.right || [])];
+        const usedPins = pins.filter(pin => pin.firmwareDefault || !['free', 'power', 'ground'].includes(pin.category));
+        return `<div class="wsa-docs">
+            <header class="wsa-docs-hero">
+                <div><span>GUÍA INTEGRADA · PERFIL ACTIVO</span><h2>Documentación de ${esc(entry?.label || board.name)}</h2><p>Conexión, funciones, mapa de pines y comandos del firmware NOPAL en un solo lugar.</p></div>
+                <button type="button" class="wsa-btn" id="wsa-docs-back">Volver al panel</button>
+            </header>
+            <nav><a href="#wsa-doc-start">Inicio rápido</a><a href="#wsa-doc-functions">Funciones</a><a href="#wsa-doc-pins">Mapa de pines</a><a href="#wsa-doc-safety">Seguridad</a><a href="#wsa-doc-services">Servicios</a><a href="#wsa-doc-commands">Comandos</a></nav>
+            <div class="wsa-docs-grid">
+                <section id="wsa-doc-start" class="wsa-doc-card wsa-doc-wide"><small>01</small><h3>Inicio rápido</h3><ol><li><b>Conecta la placa</b><span>En Mapa de pines pulsa “Agregar placa” y elige USB o WiFi.</span></li><li><b>Confirma el modelo</b><span>NOPAL lo detecta; sólo pregunta si el firmware no lo identifica.</span></li><li><b>Revisa el mapa</b><span>Se carga automáticamente el perfil ${esc(entry?.label || '')}.</span></li><li><b>Registra las salidas</b><span>Desde Configuración asigna nombres a relés, luces y sensores.</span></li></ol></section>
+                <section id="wsa-doc-functions" class="wsa-doc-card wsa-doc-wide"><small>02</small><h3>Funciones incluidas</h3><div class="wsa-doc-features"><article><b>Relés</b><span>Control ON/OFF real desde el panel.</span></article><article><b>Iluminación</b><span>Color y estado de tiras PWM/WS2812.</span></article><article><b>Telemetría</b><span>WiFi, memoria, uptime y ADC sin datos simulados.</span></article><article><b>Escenas</b><span>Varias acciones con un solo botón.</span></article><article><b>USB y WiFi</b><span>Un mismo asistente para detectar y registrar.</span></article><article><b>Mapa automático</b><span>Perfil corregido incluso en placas ya guardadas.</span></article></div></section>
+                <section id="wsa-doc-pins" class="wsa-doc-card"><small>03</small><h3>Mapa de pines · ${esc(entry?.label || '')}</h3><div class="wsa-doc-pinlist">${usedPins.map(pin => `<div><code>${esc(pin.gpio)}</code><span>${esc(pin.label)}</span><em>${esc(PIN_CATEGORIES[pin.category]?.label || pin.category)}</em></div>`).join('') || '<p>No hay asignaciones documentadas para este perfil.</p>'}</div><button type="button" class="wsa-btn wsa-btn-block" id="wsa-docs-open-pinmap">Abrir mapa interactivo</button></section>
+                <section id="wsa-doc-safety" class="wsa-doc-card wsa-doc-warning"><small>04</small><h3>Seguridad eléctrica</h3><ul><li>Los GPIO trabajan a 3.3 V; no admiten señales directas de 5 V.</li><li>Usa fuente externa adecuada para relés y tiras LED.</li><li>Une la tierra de la fuente externa con GND de la placa.</li><li>No conectes cargas de potencia directamente a un GPIO.</li><li>Revisa los pines de arranque antes de reasignarlos.</li></ul></section>
+                <section id="wsa-doc-services" class="wsa-doc-card"><small>05</small><h3>Servicios y conexión</h3><dl><dt>Detección USB</dt><dd>Handshake NOPAL por puerto serie</dd><dt>Velocidad serie</dt><dd>115200 baudios</dd><dt>Estado WiFi</dt><dd>GET /api/status</dd><dt>Prueba de salud</dt><dd>GET /health</dd><dt>Actualización</dt><dd>ElegantOTA / firmware USB</dd><dt>Placa activa</dt><dd>${esc(board.ip || board.device || 'Sin conexión configurada')}</dd></dl></section>
+                <section id="wsa-doc-commands" class="wsa-doc-card"><small>06</small><h3>Comandos NOPAL</h3><div class="wsa-doc-commands"><code>NOPAL:ID?<span>Identificación</span></code><code>NOPAL:NET?<span>Estado de red</span></code><code>NOPAL:STATUS?<span>Estado JSON</span></code><code>NOPAL:R1:ON<span>Encender relé</span></code><code>NOPAL:R1:OFF<span>Apagar relé</span></code><code>NOPAL:WS:255,80,0<span>Color LED</span></code><code>NOPAL:SCENE:READY<span>Aplicar escena</span></code><code>NOPAL:ADC?<span>Leer ADC</span></code></div></section>
             </div>
-            <div class="wsa-workshop-stats">
-                <div class="wsa-card wsa-workshop-stat"><span>Salidas</span><strong>${activeCount} / ${relays.length}</strong><small>relés encendidos</small></div>
-                <div class="wsa-card wsa-workshop-stat"><span>Iluminación</span><strong>${leds.length ? `${leds.filter(item => item.on).length}/${leds.length} activa` : 'Sin tiras'}</strong><small>${leds[0]?.config?.led_mode ? esc(leds[0].config.led_mode.toUpperCase()) : 'PWM / WS2812'}</small></div>
-                <div class="wsa-card wsa-workshop-stat"><span>Placa</span><strong>${info.free_heap ? `${Math.round(info.free_heap / 1024)} KB` : (liveBoard?.online || board?.connected ? 'Conectada' : 'Pendiente')}</strong><small>${info.latency_ms != null ? `${info.latency_ms} ms` : (board?.ip || board?.device || 'Conecta por USB o WiFi')}</small></div>
-            </div>
-            <div class="wsa-workshop-tabs">${tabs.map(([id, label, tabIcon]) => `<button type="button" class="wsa-tab${state.overviewTab === id ? ' active' : ''}" data-wsa-overview-tab="${id}">${icon(tabIcon, 15)}<span>${label}</span></button>`).join('')}</div>
-            ${workshopOverviewPanel(relays, leds, board, info, liveBoard)}
-            <div class="wsa-workshop-activity">${icon(ICON_ACTIVITY, 14)}<span>${workshopLatestActivity()}</span></div>`;
+        </div>`;
     }
 
     function workshopOverviewPanel(relays, leds, board, info, liveBoard) {
@@ -1739,6 +1817,8 @@
 
     function render() {
         if (!root) return;
+        root.classList.toggle('wsa-dashboard-mode', state.view === 'overview' && !state.wizard.active);
+        root.classList.toggle('wsa-docs-mode', state.view === 'documentation' && !state.wizard.active);
         renderHeaderChips();
         renderSubnav();
         renderContent();
@@ -1747,6 +1827,9 @@
 
     function bindEvents() {
         root.querySelector('#wsa-close-btn').addEventListener('click', () => window.switchSection?.('dashboard'));
+        root.querySelector('#wsa-docs-btn').addEventListener('click', () => switchWorkshopView('documentation'));
+        root.querySelector('#wsa-config-btn').addEventListener('click', () => switchWorkshopView('pines'));
+        root.querySelector('#wsa-manage-header-btn').addEventListener('click', openManageBoardsPanel);
 
         root.querySelector('#wsa-subnav').addEventListener('click', event => {
             const btn = event.target.closest('[data-wsa-view]');
@@ -1762,6 +1845,10 @@
         });
 
         root.querySelector('#wsa-content').addEventListener('click', event => {
+            const viewButton = event.target.closest('[data-wsa-view]');
+            if (viewButton) { switchWorkshopView(viewButton.dataset.wsaView); return; }
+            if (event.target.closest('#wsa-docs-back')) { switchWorkshopView('overview'); return; }
+            if (event.target.closest('#wsa-docs-open-pinmap')) { switchWorkshopView('pines'); return; }
             const overviewTab = event.target.closest('[data-wsa-overview-tab]');
             if (overviewTab) { state.overviewTab = overviewTab.dataset.wsaOverviewTab; render(); return; }
             if (event.target.closest('#wsa-workshop-refresh')) { loadWorkshopData(); return; }
@@ -1882,6 +1969,6 @@
     }
 
     window.NopalPluginRegistry = window.NopalPluginRegistry || {};
-    window.NopalPluginRegistry[PLUGIN_ID] = { mount, unmount, version: '2.3.1' };
+    window.NopalPluginRegistry[PLUGIN_ID] = { mount, unmount, version: '2.4.0' };
     mount();
 })();

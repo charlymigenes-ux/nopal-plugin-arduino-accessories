@@ -30,8 +30,14 @@ from starlette.middleware.sessions import SessionMiddleware
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 NOPAL_CORE_ROOT = Path(os.environ.get("NOPAL_CORE_ROOT") or PLUGIN_ROOT.parents[1])
-if str(NOPAL_CORE_ROOT) not in sys.path:
-    sys.path.insert(0, str(NOPAL_CORE_ROOT))
+core_path = str(NOPAL_CORE_ROOT)
+# pytest agrega primero la raíz del plugin; como ambos proyectos tienen un
+# paquete llamado ``backend``, eso podía resolver el backend del plugin en
+# vez del core aun con NOPAL_CORE_ROOT correcto. La raíz explícita del core
+# debe quedar al frente, no sólo estar presente en algún lugar de sys.path.
+if core_path in sys.path:
+    sys.path.remove(core_path)
+sys.path.insert(0, core_path)
 
 try:
     from backend.auth_deps import require_auth

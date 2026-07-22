@@ -200,7 +200,7 @@
     }
 
     const BOARD_CATALOG = [
-        { id: 'esp32_devkit', label: 'ESP32 (Dev Module)', chipLabel: 'ESP32-WROOM-32', pins: buildEsp32Pins(), firmwareVerified: true },
+        { id: 'esp32_devkit', label: 'ESP32 DevKit V1 / NodeMCU', chipLabel: 'ESP32-WROOM-32', pins: buildEsp32Pins(), firmwareVerified: true, image: '/plugins-static/arduino-accessories/frontend/assets/esp32-devkit-v1-nodemcu.png' },
         { id: 'esp8266_generic', label: 'ESP8266 genérico', chipLabel: 'ESP8266EX', pins: buildEsp8266Pins(false), firmwareVerified: true },
         { id: 'nodemcu_v3', label: 'NodeMCU V3', chipLabel: 'ESP8266EX (NodeMCU)', pins: buildEsp8266Pins(true), firmwareVerified: true },
         { id: 'wemos_d1_mini', label: 'Wemos D1 mini', chipLabel: 'ESP8266EX (D1 mini)', pins: buildEsp8266Pins(true), firmwareVerified: true },
@@ -405,12 +405,44 @@
             state.scenes = scenesData.scenes || [];
             state.activity = activityData.activity || [];
             state.boardTelemetry = telemetryData.boards || [];
+            reconcileBoardConnections();
         } catch (error) {
             if (!quiet) toast(error.message || 'No se pudo cargar el estado del taller.', 'error');
         } finally {
             state.workshopLoading = false;
             if (state.view === 'overview') render();
         }
+    }
+
+    // Una placa NOPAL y sus relés/tiras son el mismo hardware. Antes cada
+    // endpoint se dibujaba como si fuera una conexión diferente; aquí se
+    // cruzan por IP/USB y el mapa de pines hereda la telemetría real del
+    // accesorio sin volver a detectar ni abrir el puerto otra vez.
+    function reconcileBoardConnections() {
+        const telemetryById = new Map(state.boardTelemetry.map(item => [String(item.id), item]));
+        state.boards.forEach(board => {
+            const telemetryEntry = telemetryById.get(String(board.id));
+            const accessory = state.accessories.find(item => {
+                if (item.driver !== 'arduino') return false;
+                const config = item.config || {};
+                return (board.ip && config.ip === board.ip) || (board.device && config.device === board.device);
+            });
+            const telemetry = telemetryEntry?.telemetry || {};
+            if (telemetryEntry?.online || accessory) board.connected = true;
+            if (Object.keys(telemetry).length || accessory) {
+                const config = accessory?.config || {};
+                board.deviceInfo = {
+                    ...(board.deviceInfo || {}),
+                    ...telemetry,
+                    firmware: telemetry.firmware || config.firmware || board.deviceInfo?.firmware,
+                    protocol: telemetry.protocol ?? config.protocol ?? board.deviceInfo?.protocol,
+                    ws2812: telemetry.ws2812 ?? (config.led_mode === 'ws2812'),
+                    ws2812_count: telemetry.ws2812_count || config.led_count || config.ws2812_count,
+                    ip: board.ip || config.ip,
+                    device: board.device || config.device,
+                };
+            }
+        });
     }
 
     async function setWorkshopAccessoryPower(accessoryId, on) {
@@ -2033,9 +2065,13 @@
         bindEvents();
         render();
         window.applySidebarOrder?.();
-        checkSetupStatus();
-        loadBoardsFromBackend();
-        loadWorkshopData();
+        (async () => {
+            // Primero carga la identidad persistida; después detección y
+            // accesorios pueden enriquecerla en vez de crear/reemplazar
+            // placas durante una carrera asíncrona.
+            await loadBoardsFromBackend();
+            await Promise.all([checkSetupStatus(), loadWorkshopData()]);
+        })();
     }
 
     function unmount() {

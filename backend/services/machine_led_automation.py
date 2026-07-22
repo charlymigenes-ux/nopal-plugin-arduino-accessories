@@ -58,8 +58,21 @@ def get_led_targets() -> List[Dict[str, Any]]:
         config = accessory.get("config") or {}
         if accessory.get("driver") != "arduino" or not config.get("led_mode"):
             continue
-        count = int(config.get("led_count") or config.get("ws2812_count") or 0)
-        protocol = int(config.get("protocol") or 0)
+        # El protocolo/cantidad guardados pertenecen al momento del alta.
+        # Tras una OTA a protocolo 4 no obligamos al usuario a eliminar y
+        # volver a registrar la tira: /api/status es público y de solo
+        # lectura, así que refrescamos esas dos capacidades al abrir el
+        # configurador de escenas.
+        live = None
+        if config.get("transport") == "wifi" and config.get("ip"):
+            live = accessory_service.probe_wifi_board(str(config["ip"]), "", "")
+        count = int(
+            (live or {}).get("ws2812_count")
+            or config.get("led_count")
+            or config.get("ws2812_count")
+            or 0
+        )
+        protocol = int((live or {}).get("protocol") or config.get("protocol") or 0)
         targets.append({
             "id": accessory["id"],
             "name": accessory.get("name") or accessory["id"],

@@ -459,6 +459,74 @@
         }
     }
 
+    function lightingBoardOptions() {
+        const configured = state.boards.filter(board => board.ip || board.device).map(board => {
+            const live = state.boardTelemetry.find(item => item.board_id === board.id || (board.ip && item.ip === board.ip) || (board.device && item.device === board.device));
+            return { ...board, live: live || {}, info: live?.telemetry || board.deviceInfo || {} };
+        });
+        configured.push({ id: '__manual_wifi__', name: 'Otra placa por IP', ip: '', device: null, manual: true, info: {} });
+        return configured;
+    }
+
+    function openLightingEditor() {
+        root.querySelector('#wsa-lighting-modal')?.remove();
+        const boards = lightingBoardOptions();
+        root.insertAdjacentHTML('beforeend', `<div class="wsa-lighting-modal" id="wsa-lighting-modal"><div class="wsa-lighting-backdrop" data-wsa-lighting-close></div>
+            <form class="wsa-lighting-dialog" id="wsa-lighting-form">
+                <button type="button" class="wsa-lighting-close" data-wsa-lighting-close>×</button>
+                <div class="wsa-lighting-heading">${icon(ICON_LED, 24)}<div><small>ILUMINACIÓN DE LA PLACA</small><h2>Agregar LED o tira NeoPixel</h2><p>Registra la luz directamente desde una placa NOPAL ya agregada.</p></div></div>
+                <label><span>Placa</span><select id="wsa-lighting-board">${boards.map(board => `<option value="${esc(board.id)}">${esc(board.name)}${board.ip || board.device ? ` · ${esc(board.ip || board.device)}` : ''}</option>`).join('')}</select></label>
+                <label id="wsa-lighting-manual-ip" hidden><span>IP de la placa</span><input id="wsa-lighting-ip" placeholder="Ej. 192.168.0.85"></label>
+                <label><span>Nombre</span><input id="wsa-lighting-name" required value="Iluminación del taller" placeholder="Ej. NeoPixel impresoras"></label>
+                <div class="wsa-lighting-grid"><label><span>Tipo</span><select id="wsa-lighting-mode"><option value="ws2812">NeoPixel / WS2812</option><option value="pwm">LED RGB PWM</option></select></label>
+                <label><span>GPIO de datos</span><input id="wsa-lighting-gpio" type="number" min="0" max="48" value="23" required></label>
+                <label><span>Cantidad de LEDs</span><input id="wsa-lighting-count" type="number" min="1" max="2048" value="8" required></label></div>
+                <div class="wsa-lighting-preview" id="wsa-lighting-preview"></div>
+                <div class="wsa-lighting-credentials" id="wsa-lighting-credentials"><label><span>Usuario OTA</span><input id="wsa-lighting-user" value="admin" autocomplete="username"></label><label><span>Contraseña OTA</span><input id="wsa-lighting-pass" type="password" autocomplete="current-password"></label></div>
+                <p class="wsa-lighting-note">La cantidad puede ser 1 para un solo NeoPixel, 8 para tu tira actual o cualquier longitud que tenga configurada el firmware de esa placa.</p>
+                <div class="wsa-lighting-actions"><button type="button" class="wsa-btn" data-wsa-lighting-close>Cancelar</button><button type="submit" class="wsa-btn wsa-btn-accent">Agregar iluminación</button></div>
+            </form></div>`);
+        root.querySelectorAll('[data-wsa-lighting-close]').forEach(button => button.addEventListener('click', () => root.querySelector('#wsa-lighting-modal')?.remove()));
+        const boardSelect = root.querySelector('#wsa-lighting-board');
+        const countInput = root.querySelector('#wsa-lighting-count');
+        const syncBoard = () => {
+            const board = boards.find(item => item.id === boardSelect.value) || boards[0];
+            const info = board.info || {};
+            root.querySelector('#wsa-lighting-gpio').value = info.led_gpio ?? 23;
+            countInput.value = info.ws2812_count || info.led_count || countInput.value || 1;
+            root.querySelector('#wsa-lighting-manual-ip').hidden = !board.manual;
+            root.querySelector('#wsa-lighting-credentials').hidden = Boolean(board.device);
+            drawLightingPreview();
+        };
+        const drawLightingPreview = () => {
+            const count = Math.max(1, Math.min(64, Number(countInput.value) || 1));
+            root.querySelector('#wsa-lighting-preview').innerHTML = Array.from({ length: count }, (_, index) => `<i title="LED ${index + 1}"></i>`).join('') + (Number(countInput.value) > 64 ? `<span>+${Number(countInput.value) - 64}</span>` : '');
+        };
+        boardSelect.addEventListener('change', syncBoard);
+        countInput.addEventListener('input', drawLightingPreview);
+        syncBoard();
+        root.querySelector('#wsa-lighting-form').addEventListener('submit', async event => {
+            event.preventDefault();
+            const button = event.submitter;
+            button.disabled = true;
+            const board = boards.find(item => item.id === boardSelect.value) || boards[0];
+            const info = board.info || {};
+            try {
+                await api('/api/accessories/arduino/lighting', { method: 'POST', body: new URLSearchParams({
+                    name: root.querySelector('#wsa-lighting-name').value.trim(),
+                    transport: board.device ? 'usb' : 'wifi', ip: board.ip || root.querySelector('#wsa-lighting-ip').value.trim(), device: board.device || '',
+                    username: root.querySelector('#wsa-lighting-user').value, password: root.querySelector('#wsa-lighting-pass').value,
+                    mode: root.querySelector('#wsa-lighting-mode').value, gpio: root.querySelector('#wsa-lighting-gpio').value,
+                    count: countInput.value, protocol: info.protocol || 0,
+                }) });
+                root.querySelector('#wsa-lighting-modal')?.remove();
+                state.overviewTab = 'lights';
+                await loadWorkshopData({ quiet: true });
+                toast('Iluminación agregada. Ya puedes asignarla a escenas por máquina.');
+            } catch (error) { toast(error.message, 'error'); button.disabled = false; }
+        });
+    }
+
     async function runWorkshopScene(sceneId) {
         const scene = state.scenes.find(item => item.id === sceneId);
         try {
@@ -1089,7 +1157,7 @@
                     <div class="wsa-header-icon">${icon(ICON_CPU, 34)}</div>
                     <div class="wsa-header-copy">
                         <h1>Accesorios Arduino/ESP32</h1>
-                        <span class="wsa-header-sub"><strong>NOPAL Labs</strong> · v2.4.0</span>
+                        <span class="wsa-header-sub"><strong>NOPAL Labs</strong> · v2.4.1</span>
                     </div>
                     <span class="wsa-header-online" id="wsa-header-online"><span class="wsa-status-dot"></span>Comprobando…</span>
                     <div class="wsa-header-actions">
@@ -1482,11 +1550,12 @@
 
     function workshopLightsPanel(leds) {
         if (!leds.length) return `<div class="wsa-card wsa-workshop-empty"><h2>${icon(ICON_LED, 16)}Iluminación</h2><p>No hay tiras LED registradas todavía.</p><button type="button" class="wsa-btn wsa-btn-accent" id="wsa-workshop-add-accessory">${icon(ICON_PLUS, 14)}<span>Agregar tira LED</span></button></div>`;
-        return `<div class="wsa-workshop-led-grid">${leds.map(item => `<section class="wsa-card wsa-workshop-led">
+        return `<div class="wsa-card-title-row wsa-workshop-light-toolbar"><h2>${icon(ICON_LED, 16)}Iluminación registrada</h2><button type="button" class="wsa-btn wsa-btn-accent" id="wsa-workshop-add-accessory">${icon(ICON_PLUS, 13)}Agregar LED o tira</button></div><div class="wsa-workshop-led-grid">${leds.map(item => `<section class="wsa-card wsa-workshop-led">
             <div class="wsa-card-title-row"><h2>${icon(ICON_LED, 16)}${esc(item.name)}</h2><span class="wsa-status-pill">${esc((item.config?.led_mode || 'LED').toUpperCase())}</span></div>
             <label><span>Color</span><input type="color" data-wsa-workshop-led-color="${esc(item.id)}" value="${rgbToHex(item.config?.led_color)}"></label>
             <button type="button" class="wsa-btn wsa-btn-accent" data-wsa-workshop-led-apply="${esc(item.id)}">Aplicar color</button>
-            <small>${esc(item.config?.transport === 'wifi' ? item.config?.ip : (item.config?.device || 'Placa NOPAL'))}</small>
+            <div class="wsa-led-presets"><button type="button" data-wsa-led-preset="${esc(item.id)}:#000000">Apagar</button><button type="button" data-wsa-led-preset="${esc(item.id)}:#ffffff">Blanco</button><button type="button" data-wsa-led-preset="${esc(item.id)}:#22c55e">Listo</button><button type="button" data-wsa-led-preset="${esc(item.id)}:#ef4444">Alerta</button></div>
+            <small>${esc(item.config?.transport === 'wifi' ? item.config?.ip : (item.config?.device || 'Placa NOPAL'))} · GPIO${esc(item.config?.gpio ?? '?')} · ${esc(item.config?.led_count || item.config?.ws2812_count || 1)} LED(s)</small>
         </section>`).join('')}</div>`;
     }
 
@@ -1854,10 +1923,17 @@
             if (event.target.closest('#wsa-workshop-refresh')) { loadWorkshopData(); return; }
             if (event.target.closest('#wsa-workshop-configure')) { switchWorkshopView('pines'); return; }
             if (event.target.closest('#wsa-workshop-add-accessory')) {
-                window.switchSection?.('settings');
-                setTimeout(() => document.getElementById('accessories-settings-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 200);
+                if (state.overviewTab === 'lights') openLightingEditor();
+                else {
+                    window.switchSection?.('settings');
+                    setTimeout(() => document.getElementById('accessories-settings-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 200);
+                }
                 return;
             }
+            const lightingClose = event.target.closest('[data-wsa-lighting-close]');
+            if (lightingClose) { root.querySelector('#wsa-lighting-modal')?.remove(); return; }
+            const ledPreset = event.target.closest('[data-wsa-led-preset]');
+            if (ledPreset) { const separator = ledPreset.dataset.wsaLedPreset.lastIndexOf(':'); setWorkshopLedColor(ledPreset.dataset.wsaLedPreset.slice(0, separator), ledPreset.dataset.wsaLedPreset.slice(separator + 1)); return; }
             const ledApply = event.target.closest('[data-wsa-workshop-led-apply]');
             if (ledApply) {
                 const color = root.querySelector(`[data-wsa-workshop-led-color="${CSS.escape(ledApply.dataset.wsaWorkshopLedApply)}"]`)?.value;
@@ -1969,6 +2045,6 @@
     }
 
     window.NopalPluginRegistry = window.NopalPluginRegistry || {};
-    window.NopalPluginRegistry[PLUGIN_ID] = { mount, unmount, version: '2.4.0' };
+    window.NopalPluginRegistry[PLUGIN_ID] = { mount, unmount, version: '2.4.1' };
     mount();
 })();

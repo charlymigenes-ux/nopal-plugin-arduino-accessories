@@ -153,6 +153,35 @@ class TestAccessoryLed:
         response = client.post("/api/accessories/led", data={"id": entry["id"], "r": 1, "g": 2, "b": 3})
         assert response.status_code == 404
 
+    def test_register_neopixel_directly_from_wifi_board(self, client, as_admin):
+        response = client.post("/api/accessories/arduino/lighting", data={
+            "name": "NeoPixel impresoras",
+            "transport": "wifi",
+            "ip": "192.168.0.85",
+            "mode": "ws2812",
+            "gpio": 23,
+            "count": 8,
+            "protocol": 3,
+        })
+        assert response.status_code == 200
+        entry = response.json()
+        assert entry["kind"] == "led_strip"
+        assert entry["config"]["ip"] == "192.168.0.85"
+        assert entry["config"]["gpio"] == 23
+        assert entry["config"]["led_count"] == 8
+
+    def test_register_single_led_and_validate_count(self, client, as_admin):
+        good = client.post("/api/accessories/arduino/lighting", data={
+            "name": "LED de estado", "transport": "usb", "device": "/dev/ttyUSB0",
+            "mode": "ws2812", "gpio": 4, "count": 1,
+        })
+        assert good.status_code == 200
+        bad = client.post("/api/accessories/arduino/lighting", data={
+            "name": "Vacía", "transport": "usb", "device": "/dev/ttyUSB0",
+            "mode": "ws2812", "gpio": 4, "count": 0,
+        })
+        assert bad.status_code == 400
+
 
 class TestAccessoryDrivers:
     def test_drivers_lists_known_names(self, client, as_operator):

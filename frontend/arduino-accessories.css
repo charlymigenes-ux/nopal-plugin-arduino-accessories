@@ -756,6 +756,30 @@
 .wsa-doc-commands code { display: flex; justify-content: space-between; gap: 9px; padding: 9px; border: 1px solid var(--wsa-border); border-radius: 7px; background: var(--wsa-control); }
 .wsa-doc-commands span { color: var(--text-muted); font-family: inherit; }
 
+/* Alta directa de iluminación desde una placa ya detectada */
+.wsa-lighting-modal { position: fixed; inset: 0; z-index: 12000; display: grid; place-items: center; padding: 18px; }
+.wsa-lighting-backdrop { position: absolute; inset: 0; background: rgba(1,7,12,.82); backdrop-filter: blur(8px); }
+.wsa-lighting-dialog { position: relative; width: min(590px, 94vw); max-height: 90vh; overflow: auto; box-sizing: border-box; padding: 24px; border: 1px solid #26733a; border-radius: 18px; background: var(--wsa-panel); box-shadow: 0 26px 80px #000a; }
+.wsa-lighting-close { position: absolute; top: 14px; right: 14px; width: 34px; height: 34px; border: 1px solid #7f2933; border-radius: 50%; background: #35131a; color: #ff7b87; font-size: 22px; cursor: pointer; }
+.wsa-lighting-heading { display: flex; gap: 13px; padding-right: 35px; margin-bottom: 18px; }
+.wsa-lighting-heading > svg { flex: 0 0 44px; width: 44px; height: 44px; padding: 9px; box-sizing: border-box; border: 1px solid #26733a; border-radius: 12px; color: #57e04b; background: #102b1a; }
+.wsa-lighting-heading small { color: #57e04b; letter-spacing: .12em; font-weight: 750; }
+.wsa-lighting-heading h2 { margin: 4px 0; }
+.wsa-lighting-heading p, .wsa-lighting-note { margin: 0; color: var(--text-muted); font-size: .75rem; line-height: 1.5; }
+.wsa-lighting-dialog > label, .wsa-lighting-grid label, .wsa-lighting-credentials label { display: grid; gap: 6px; margin-bottom: 12px; color: var(--text-secondary); font-size: .72rem; }
+.wsa-lighting-dialog input, .wsa-lighting-dialog select { width: 100%; box-sizing: border-box; padding: 9px 10px; border: 1px solid var(--wsa-border); border-radius: 8px; background: var(--wsa-control); color: var(--text); }
+.wsa-lighting-grid, .wsa-lighting-credentials { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.wsa-lighting-credentials { grid-template-columns: 1fr 1fr; }
+.wsa-lighting-preview { display: flex; flex-wrap: wrap; gap: 5px; min-height: 28px; margin: 3px 0 12px; padding: 10px; border: 1px solid var(--wsa-border); border-radius: 10px; background: var(--wsa-control); }
+.wsa-lighting-preview i { width: 17px; height: 17px; border-radius: 5px; background: #57e04b; box-shadow: 0 0 9px #57e04b77; }
+.wsa-lighting-preview span { color: var(--text-muted); font-size: .7rem; }
+.wsa-lighting-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 18px; }
+.wsa-workshop-light-toolbar { margin-bottom: 10px; }
+.wsa-led-presets { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
+.wsa-led-presets button { padding: 6px 4px; border: 1px solid var(--wsa-border); border-radius: 7px; background: var(--wsa-control); color: var(--text-secondary); cursor: pointer; font-size: .65rem; }
+.wsa-led-presets button:hover { border-color: #57e04b; color: #57e04b; }
+@media (max-width: 620px) { .wsa-lighting-grid { grid-template-columns: 1fr; } .wsa-lighting-credentials { grid-template-columns: 1fr; } }
+
 @media (max-width: 1200px) {
     .wsa-classic-dashboard { grid-template-columns: 1.4fr 1fr; }
     .wsa-classic-summary, .wsa-classic-controls, .wsa-classic-scenes { grid-column: 1; }

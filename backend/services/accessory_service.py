@@ -317,6 +317,7 @@ def probe_wifi_board(ip: str, username: str, password: str) -> Optional[Dict[str
         "scene": led.get("scene"),
         "led_effect": led.get("effect"),
         "led_brightness": led.get("brightness"),
+        "led_gpio": led.get("gpio"),
     }
     result.update({key: value for key, value in optional.items() if value is not None})
     return result

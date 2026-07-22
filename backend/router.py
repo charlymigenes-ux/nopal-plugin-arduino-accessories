@@ -212,6 +212,55 @@ async def accessory_register_endpoint(
     return entry
 
 
+@router.post("/api/accessories/arduino/lighting")
+async def accessory_arduino_lighting_endpoint(
+    name: str = Form(...),
+    transport: str = Form(...),
+    device: str = Form(""),
+    ip: str = Form(""),
+    username: str = Form(""),
+    password: str = Form(""),
+    mode: str = Form("ws2812"),
+    gpio: int = Form(...),
+    count: int = Form(1),
+    protocol: int = Form(0),
+    user: dict = Depends(require_role("admin")),
+):
+    """Alta directa de una luz conectada a una placa NOPAL existente.
+
+    Sigue usando el driver Arduino real, pero evita obligar al usuario a
+    construir JSON dentro de la pantalla genérica de accesorios.
+    """
+    name = name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Ponle un nombre a la iluminación")
+    if transport not in {"usb", "wifi"}:
+        raise HTTPException(status_code=400, detail="Transporte inválido")
+    if transport == "wifi" and not ip.strip():
+        raise HTTPException(status_code=400, detail="Selecciona una placa con IP")
+    if transport == "usb" and not device.strip():
+        raise HTTPException(status_code=400, detail="Selecciona una placa USB")
+    if mode not in {"ws2812", "pwm"}:
+        raise HTTPException(status_code=400, detail="Tipo de iluminación inválido")
+    if gpio < 0 or gpio > 48:
+        raise HTTPException(status_code=400, detail="GPIO fuera de rango")
+    if count < 1 or count > 2048:
+        raise HTTPException(status_code=400, detail="La cantidad debe estar entre 1 y 2048 LEDs")
+    config = {
+        "transport": transport,
+        "led_mode": mode,
+        "gpio": gpio,
+        "led_count": count,
+        "ws2812_count": count if mode == "ws2812" else 0,
+        "protocol": protocol,
+    }
+    if transport == "wifi":
+        config.update({"ip": ip.strip(), "ota_username": username, "ota_password": password})
+    else:
+        config["device"] = device.strip()
+    return register_accessory(name, "led_strip", "arduino", config)
+
+
 @router.post("/api/accessories/remove")
 async def accessory_remove_endpoint(id: str = Form(...), user: dict = Depends(require_role("admin"))):
     if not unregister_accessory(id):

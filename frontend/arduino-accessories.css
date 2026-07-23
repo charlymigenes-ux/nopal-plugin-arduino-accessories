@@ -155,6 +155,61 @@
 .wsa-card-title-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 .wsa-text-muted { color: var(--text-muted); font-size: .74rem; }
 .wsa-card-title-row h2 { margin: 0; }
+.wsa-card-title-group { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.wsa-card-title-group h2 { margin: 0; }
+
+/* ── Menú "⋯" por ficha (ver detalles / actualizar firmware / eliminar) ── */
+.wsa-card-menu { position: relative; flex-shrink: 0; }
+.wsa-card-menu-btn {
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 1px solid var(--wsa-border);
+    border-radius: 8px;
+    background: var(--wsa-control);
+    color: var(--text-muted);
+    cursor: pointer;
+}
+.wsa-card-menu-btn:hover { border-color: rgba(var(--wsa-accent-rgb), .5); color: var(--wsa-accent); }
+.wsa-card-menu-dropdown {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 5;
+    min-width: 180px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 6px;
+    border: 1px solid var(--wsa-border);
+    border-radius: 10px;
+    background: var(--wsa-card);
+    box-shadow: 0 12px 28px rgba(0,0,0,.35);
+}
+.wsa-card-menu-dropdown button {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 9px;
+    border: none;
+    border-radius: 7px;
+    background: none;
+    color: var(--text-secondary);
+    font-size: .8rem;
+    text-align: left;
+    cursor: pointer;
+}
+.wsa-card-menu-dropdown button:hover { background: var(--wsa-control); color: var(--text); }
+.wsa-card-menu-dropdown button.wsa-card-menu-danger { color: #f87171; }
+.wsa-card-menu-dropdown button.wsa-card-menu-danger:hover { background: rgba(248,113,113,.12); color: #f87171; }
+
+.wsa-lighting-dialog.wsa-led-details-dialog { width: min(380px, 92vw); }
+.wsa-led-details-rows { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 18px; }
+.wsa-led-details-rows > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 10px; border: 1px solid var(--wsa-border); border-radius: 8px; background: var(--wsa-control); }
+.wsa-led-details-rows span { color: var(--text-muted); font-size: .76rem; }
+.wsa-led-details-rows strong { color: var(--text); font-size: .82rem; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; }
 .wsa-empty { color: var(--text-muted); font-size: .85rem; padding: 6px 0; }
 .wsa-empty-note { color: var(--text-muted); font-size: .82rem; margin: 0; }
 .wsa-note { color: #f59e0b; font-size: .72rem; }
@@ -389,6 +444,38 @@
 .wsa-info-grid label { font-size: .68rem; color: var(--text-muted); }
 .wsa-info-grid strong { font-size: .82rem; color: var(--text); }
 
+/* ── Ficha "Datos reales de la placa" -- misma base que .wsa-card pero con
+   acento de "dato verificado" y tiles con ícono, en vez del grid plano
+   label/valor que desentonaba con el resto de las fichas de esta página. ── */
+.wsa-card-verified {
+    border-color: rgba(var(--wsa-accent-rgb), .4);
+    background: linear-gradient(160deg, rgba(var(--wsa-accent-rgb), .07), var(--wsa-card) 55%);
+}
+.wsa-card-verified h2 { color: var(--wsa-accent); }
+.wsa-info-grid-device { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 0; }
+.wsa-info-tile {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 11px;
+    border: 1px solid var(--wsa-border);
+    border-radius: 10px;
+    background: var(--wsa-control);
+}
+.wsa-info-tile-icon {
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    background: rgba(var(--wsa-accent-rgb), .14);
+    color: var(--wsa-accent);
+}
+.wsa-info-tile div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.wsa-info-tile label { font-size: .66rem; color: var(--text-muted); }
+.wsa-info-tile strong { font-size: .82rem; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* ── Vistas filtradas (LEDs/Relés/Sensores) ── */
 .wsa-filtered-list, .wsa-template-list { display: flex; flex-direction: column; gap: 8px; }
 .wsa-device-row {
@@ -534,21 +621,98 @@
 }
 .wsa-panel-actions button.wsa-btn-accent { border-color: var(--wsa-accent); background: rgba(var(--wsa-accent-rgb), .18); color: var(--wsa-accent); }
 
-/* ── Modal "Gestionar placas" -- lista de filas editables, no un form único ── */
-.wsa-manageboards-dialog { width: min(560px, 94vw); max-height: 80vh; }
-.wsa-manageboards-list { display: flex; flex-direction: column; gap: 10px; overflow-y: auto; max-height: 60vh; padding-right: 2px; }
+/* ── Modal "Gestionar placas" -- estilo "popup NOPAL" (hexágono + acentos +
+   cactus decorativos), igual criterio que .printer-send-modal-content del
+   core, pero con las variables --wsa-accent* del plugin para que se adapte
+   solo al tema activo en vez de quedar en verde fijo. ── */
+.wsa-manageboards-dialog {
+    position: relative;
+    width: min(560px, 94vw);
+    max-height: 80vh;
+    overflow: hidden;
+    padding-top: 26px;
+    /* Header con vignette negro al 60% que se apaga hacia transparente en
+       vez del fondo plano de .wsa-panel-dialog -- mismo look "popup NOPAL"
+       que el resto del rediseño, sin perder legibilidad en las filas de
+       abajo (el degradado se apaga bien antes de llegar ahí). */
+    background: linear-gradient(180deg, rgba(0, 0, 0, .6), transparent 60%), var(--card-bg);
+}
+.wsa-manageboards-close {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    z-index: 3;
+    width: 28px;
+    height: 28px;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--wsa-border);
+    border-radius: 50%;
+    background: var(--wsa-control);
+    color: var(--text-muted);
+    font-size: 1.05rem;
+    line-height: 1;
+    cursor: pointer;
+}
+.wsa-manageboards-close:hover { border-color: var(--wsa-accent); color: var(--wsa-accent); }
+.wsa-manageboards-cactus {
+    position: absolute;
+    bottom: 4px;
+    width: 68px;
+    height: auto;
+    opacity: .35;
+    filter: drop-shadow(0 0 16px rgba(var(--wsa-accent-rgb), .35));
+    pointer-events: none;
+    z-index: 0;
+}
+.wsa-manageboards-cactus-left { left: 8px; }
+.wsa-manageboards-cactus-right { right: 8px; }
+.wsa-manageboards-header {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 6px;
+    margin-bottom: 14px;
+}
+.wsa-manageboards-hexagon {
+    width: 44px;
+    height: 44px;
+    display: grid;
+    place-items: center;
+    border-radius: var(--radius-md, 10px);
+    background: rgba(var(--wsa-accent-rgb), .12);
+    border: 1px solid rgba(var(--wsa-accent-rgb), .4);
+    color: var(--wsa-accent);
+}
+.wsa-manageboards-title-row { display: flex; align-items: center; justify-content: center; gap: 8px; }
+.wsa-manageboards-title-row h2 { margin: 0; font-size: 1.05rem; font-weight: 800; letter-spacing: .02em; text-transform: uppercase; color: var(--text); white-space: nowrap; }
+.wsa-manageboards-trace { color: var(--wsa-accent); opacity: .55; flex-shrink: 0; }
+.wsa-manageboards-header p { margin: 0; font-size: .8rem; color: var(--text-muted); }
+.wsa-manageboards-list { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; max-height: 56vh; padding-right: 2px; }
 .wsa-manageboard-row {
     display: flex;
     align-items: flex-end;
     gap: 10px;
-    padding: 10px;
+    padding: 12px;
     border: 1px solid var(--wsa-border);
-    border-radius: 10px;
+    border-radius: 12px;
     background: var(--wsa-control);
+    transition: border-color .15s ease;
+    min-width: 0;
 }
-.wsa-manageboard-fields { flex: 1; display: grid; grid-template-columns: 1.2fr 1fr 1fr; gap: 8px; }
-.wsa-manageboard-fields label { display: flex; flex-direction: column; gap: 4px; font-size: .72rem; color: var(--text-muted); }
+.wsa-manageboard-row:focus-within { border-color: rgba(var(--wsa-accent-rgb), .5); }
+/* minmax(0, 1fr) en vez de 1fr a secas -- sin esto, una columna de grid no
+   se achica más allá del ancho intrínseco de su contenido (el input), y esa
+   resistencia es justo lo que empujaba los botones ✓/✕ fuera del modal. */
+.wsa-manageboard-fields { flex: 1; min-width: 0; display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+.wsa-manageboard-fields label { display: flex; flex-direction: column; gap: 4px; font-size: .72rem; color: var(--text-muted); min-width: 0; }
 .wsa-manageboard-fields input {
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
     padding: 7px 9px;
     border: 1px solid var(--wsa-border);
     border-radius: 7px;
@@ -556,6 +720,7 @@
     color: var(--text);
     font-size: .8rem;
 }
+.wsa-manageboard-fields input:focus { border-color: var(--wsa-accent); outline: none; }
 .wsa-manageboard-actions { display: flex; gap: 6px; flex-shrink: 0; }
 
 /* ── Asistente de firmware -- habla con el backend real, ver comentario en el JS ── */
@@ -707,6 +872,8 @@
 .wsa-classic-relays p strong, .wsa-classic-relays p span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wsa-classic-relays p strong { font-size: .74rem; }
 .wsa-classic-relays p span, .wsa-classic-unassigned { color: var(--text-muted); font-size: .65rem; }
+.wsa-classic-unassigned { cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.wsa-classic-unassigned:hover { color: var(--wsa-accent); }
 .wsa-classic-control-footer { display: flex; align-items: center; gap: 22px; min-height: 39px; margin-top: 10px; padding: 5px 10px; border: 1px solid var(--wsa-border); border-radius: 8px; color: var(--text-muted); font-size: .68rem; }
 .wsa-classic-control-footer span { display: flex; align-items: center; gap: 7px; }
 .wsa-classic-control-footer button { margin-left: auto; }

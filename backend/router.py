@@ -3,11 +3,13 @@ import json
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 
 from backend.auth_deps import require_auth, require_role
 from .services import accessory_scenes, machine_led_automation
 from .services.accessory_service import (
     discover_arduino_boards,
+    get_accessory_connection,
     get_configured_boards_telemetry,
     get_accessories,
     get_accessories_status,
@@ -27,6 +29,7 @@ from .services.firmware_flash_service import (
     flash_via_usb,
     list_builds,
     resolve_build_path,
+    resolve_ino_source_path,
     save_build,
 )
 
@@ -261,6 +264,41 @@ async def accessory_arduino_lighting_endpoint(
     return register_accessory(name, "led_strip", "arduino", config)
 
 
+@router.post("/api/accessories/arduino/relay")
+async def accessory_arduino_relay_endpoint(
+    name: str = Form(...),
+    transport: str = Form(...),
+    device: str = Form(""),
+    ip: str = Form(""),
+    username: str = Form(""),
+    password: str = Form(""),
+    relay: int = Form(...),
+    user: dict = Depends(require_role("admin")),
+):
+    """Alta directa de un relé de una placa NOPAL existente -- misma idea que
+    /api/accessories/arduino/lighting: la placa ya reportó cuántos relés
+    tiene (ver /api/status), así que solo falta ponerle nombre en vez de
+    mandar al usuario a construir un accesorio desde cero en la pantalla
+    genérica."""
+    name = name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Ponle un nombre al relé")
+    if transport not in {"usb", "wifi"}:
+        raise HTTPException(status_code=400, detail="Transporte inválido")
+    if transport == "wifi" and not ip.strip():
+        raise HTTPException(status_code=400, detail="Selecciona una placa con IP")
+    if transport == "usb" and not device.strip():
+        raise HTTPException(status_code=400, detail="Selecciona una placa USB")
+    if relay < 1 or relay > 16:
+        raise HTTPException(status_code=400, detail="Número de relé fuera de rango")
+    config = {"transport": transport, "relay": relay}
+    if transport == "wifi":
+        config.update({"ip": ip.strip(), "ota_username": username, "ota_password": password})
+    else:
+        config["device"] = device.strip()
+    return register_accessory(name, "relay", "arduino", config)
+
+
 @router.post("/api/accessories/remove")
 async def accessory_remove_endpoint(id: str = Form(...), user: dict = Depends(require_role("admin"))):
     if not unregister_accessory(id):
@@ -300,6 +338,13 @@ async def accessory_led_endpoint(
     return {"success": True}
 
 
+@router.get("/api/accessories/machine-led/enabled")
+async def machine_led_enabled_endpoint(user: dict = Depends(require_auth)):
+    """Estado habilitado/deshabilitado de todas las máquinas configuradas,
+    para pintar el ícono de ajustes LED en cada tarjeta sin abrir el modal."""
+    return {"enabled": machine_led_automation.list_enabled_by_key()}
+
+
 @router.get("/api/accessories/machine-led/config")
 async def machine_led_config_endpoint(
     machine_type: str,
@@ -328,7 +373,7 @@ async def machine_led_save_config_endpoint(
         colors_data = json.loads(colors)
         if not isinstance(colors_data, dict):
             raise ValueError("Los colores no tienen el formato esperado")
-        return machine_led_automation.save_config(
+        return await machine_led_automation.save_config(
             machine_type, machine_id, machine_name, enabled,
             accessory_id, start, count, colors_data,
         )
@@ -341,11 +386,12 @@ async def machine_led_state_endpoint(
     machine_type: str = Form(...),
     machine_id: str = Form(...),
     state: str = Form(...),
+    progress: Optional[int] = Form(None),
     user: dict = Depends(require_auth),
 ):
     if machine_type not in machine_led_automation.MACHINE_TYPES or not machine_id:
         raise HTTPException(status_code=400, detail="Máquina no válida")
-    return await machine_led_automation.apply_state(machine_type, machine_id, state)
+    return await machine_led_automation.apply_state(machine_type, machine_id, state, progress)
 
 
 @router.post("/api/accessories/rename")
@@ -421,6 +467,28 @@ async def accessory_firmware_builds_endpoint(user: dict = Depends(require_auth))
     return {"builds": list_builds()}
 
 
+@router.get("/api/accessories/firmware/builds/{filename}/download")
+async def accessory_firmware_download_endpoint(filename: str, user: dict = Depends(require_auth)):
+    """Descarga un binario .bin ya subido -- para quien prefiera subirlo a
+    mano desde el panel OTA de la propia placa (http://<ip>/update) en vez
+    de dejar que NOPAL lo haga."""
+    try:
+        bin_path = resolve_build_path(filename)
+    except (ValueError, FileNotFoundError) as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return FileResponse(bin_path, filename=bin_path.name, media_type="application/octet-stream")
+
+
+@router.get("/api/accessories/firmware/source")
+async def accessory_firmware_source_endpoint(user: dict = Depends(require_auth)):
+    """Descarga el .ino fuente del firmware actual del accesorio."""
+    try:
+        ino_path = resolve_ino_source_path()
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return FileResponse(ino_path, filename=ino_path.name, media_type="text/x-arduino")
+
+
 @router.post("/api/accessories/firmware/upload")
 async def accessory_firmware_upload_endpoint(
     file: UploadFile = File(...),
@@ -488,4 +556,58 @@ async def accessory_firmware_flash_ota_endpoint(
     if not result.get("success"):
         raise HTTPException(status_code=502, detail=result.get("error") or "Fallo al flashear por OTA")
 
+    return result
+
+
+@router.get("/api/accessories/{accessory_id}/firmware-status")
+async def accessory_firmware_status_endpoint(accessory_id: str, user: dict = Depends(require_auth)):
+    """Prueba la placa de un accesorio WiFi con sus credenciales YA
+    guardadas y devuelve modelo/firmware/protocolo actuales -- el paso
+    "Buscando… / Conectado" del flujo de actualización automática."""
+    config = get_accessory_connection(accessory_id)
+    if not config:
+        raise HTTPException(status_code=404, detail="Accesorio no encontrado")
+    ip = config.get("ip")
+    if not ip:
+        raise HTTPException(status_code=400, detail="Este accesorio no está conectado por WiFi")
+    info = probe_wifi_board(ip, config.get("ota_username", ""), config.get("ota_password", ""))
+    if info is None:
+        raise HTTPException(status_code=502, detail="No se pudo contactar la placa")
+    return info
+
+
+@router.post("/api/accessories/firmware/flash-ota-for/{accessory_id}")
+async def accessory_firmware_flash_ota_for_endpoint(
+    accessory_id: str,
+    filename: str = Form(""),
+    user: dict = Depends(require_role("admin")),
+):
+    """Igual que /firmware/flash-ota, pero usando la IP y credenciales OTA
+    YA guardadas del accesorio en vez de pedírselas de nuevo al usuario --
+    el botón "que NOPAL lo haga por ti". Sin `filename`, usa el binario más
+    reciente entre los ya subidos."""
+    config = get_accessory_connection(accessory_id)
+    if not config:
+        raise HTTPException(status_code=404, detail="Accesorio no encontrado")
+    ip = config.get("ip")
+    if not ip:
+        raise HTTPException(status_code=400, detail="Este accesorio no está conectado por WiFi")
+
+    if filename:
+        try:
+            bin_path = resolve_build_path(filename)
+        except (ValueError, FileNotFoundError) as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    else:
+        builds = list_builds()
+        if not builds:
+            raise HTTPException(status_code=404, detail="No hay ningún binario de firmware subido todavía")
+        bin_path = resolve_build_path(builds[0]["filename"])
+
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None, flash_via_ota, ip, str(bin_path), config.get("ota_username", ""), config.get("ota_password", "")
+    )
+    if not result.get("success"):
+        raise HTTPException(status_code=502, detail=result.get("error") or "Fallo al flashear por OTA")
     return result

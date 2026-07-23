@@ -695,6 +695,16 @@ def get_accessories() -> List[Dict[str, Any]]:
     return [_public(e) for e in _load_registry()]
 
 
+def get_accessory_connection(accessory_id: str) -> Optional[Dict[str, Any]]:
+    """Config de conexión SIN redactar (ip/device/credenciales OTA reales)
+    de un accesorio -- solo para uso interno del servidor (ej. flashear
+    firmware por OTA sin pedirle la contraseña de nuevo al usuario). Nunca
+    se expone tal cual por una respuesta de API pública -- ver _public(),
+    que sí redacta ota_password para /api/accessories."""
+    entry = next((e for e in _load_registry() if e.get("id") == accessory_id), None)
+    return entry.get("config") if entry else None
+
+
 def register_accessory(name: str, kind: str, driver: str, config: Dict[str, Any]) -> Dict[str, Any]:
     spec = DRIVERS.get(driver)
     if spec is None:

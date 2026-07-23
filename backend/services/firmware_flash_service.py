@@ -27,6 +27,7 @@ import requests
 logger = logging.getLogger(__name__)
 
 BUILDS_DIR = Path("firmware/nopal_accessory/builds")
+INO_SOURCE_PATH = Path("firmware/nopal_accessory/nopal_accessory.ino")
 
 # Velocidad de flasheo por USB. Si el adaptador USB-serie no la soporta,
 # esptool reintenta solo a una velocidad menor — no hace falta que este
@@ -124,6 +125,15 @@ def resolve_build_path(filename: str) -> Path:
     if not path.is_file():
         raise FileNotFoundError(f"No se encontró el binario: {safe_name}")
     return path
+
+
+def resolve_ino_source_path() -> Path:
+    """Ruta del .ino fuente del firmware actual del accesorio -- para quien
+    prefiera descargar el código (no un binario) y compilarlo/revisarlo por
+    su cuenta antes de flashear manualmente."""
+    if not INO_SOURCE_PATH.is_file():
+        raise FileNotFoundError("No se encontró el código fuente del firmware")
+    return INO_SOURCE_PATH
 
 
 # ── Flasheo por USB (esptool) ──

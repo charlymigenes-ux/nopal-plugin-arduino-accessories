@@ -375,6 +375,7 @@
     const ICON_ACTIVITY = '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>';
     const ICON_FOLDER = '<path d="M4 4h6l2 3h8a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Z"/>';
     const ICON_BOOK = '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V5H6.5A2.5 2.5 0 0 0 4 7.5z"/><path d="M12 5v12"/>';
+    const ICON_MORE = '<circle cx="12" cy="5" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1.6" fill="currentColor" stroke="none"/>';
 
     // ============================================================================
     // AUXILIARES
@@ -491,6 +492,51 @@
         }
     }
 
+    function openLedDetailsPanel(accessoryId) {
+        const accessory = state.accessories.find(item => item.id === accessoryId);
+        if (!accessory) return;
+        const config = accessory.config || {};
+        const isWifi = config.transport === 'wifi';
+        root.querySelector('#wsa-led-details-modal')?.remove();
+        const rows = [
+            ['Nombre', accessory.name],
+            ['ID', accessory.id],
+            ['Driver', accessory.driver],
+            ['Transporte', isWifi ? 'WiFi' : 'USB'],
+            [isWifi ? 'IP' : 'Puerto', isWifi ? (config.ip || '—') : (config.device || '—')],
+            ['GPIO', config.gpio ?? '—'],
+            ['Modo LED', (config.led_mode || '—').toUpperCase()],
+            ['Cantidad de LEDs', config.led_count || config.ws2812_count || '—'],
+            ['Protocolo', config.protocol ?? '—'],
+        ];
+        if (isWifi) rows.push(['Usuario OTA', config.ota_username || '—']);
+        root.insertAdjacentHTML('beforeend', `<div class="wsa-lighting-modal" id="wsa-led-details-modal"><div class="wsa-lighting-backdrop" data-wsa-led-details-close></div>
+            <div class="wsa-lighting-dialog wsa-led-details-dialog">
+                <button type="button" class="wsa-lighting-close" data-wsa-led-details-close>×</button>
+                <div class="wsa-lighting-heading">${icon(ICON_ACTIVITY, 24)}<div><small>DETALLES DEL ACCESORIO</small><h2>${esc(accessory.name)}</h2></div></div>
+                <div class="wsa-led-details-rows">${rows.map(([label, value]) => `<div><span>${esc(label)}</span><strong>${esc(String(value))}</strong></div>`).join('')}</div>
+                <div class="wsa-lighting-actions"><button type="button" class="wsa-btn wsa-btn-accent" data-wsa-led-details-close>Cerrar</button></div>
+            </div></div>`);
+        root.querySelectorAll('[data-wsa-led-details-close]').forEach(btn => btn.addEventListener('click', () => root.querySelector('#wsa-led-details-modal')?.remove()));
+    }
+
+    async function deleteWorkshopAccessory(accessoryId) {
+        const accessory = state.accessories.find(item => item.id === accessoryId);
+        const name = accessory?.name || 'este accesorio';
+        const message = `Vas a eliminar "${name}" de NOPAL. Esta acción no se puede deshacer.`;
+        const confirmed = typeof window.appConfirm === 'function'
+            ? await window.appConfirm(message, 'Eliminar accesorio', 'danger')
+            : window.confirm(message);
+        if (!confirmed) return;
+        try {
+            await api('/api/accessories/remove', { method: 'POST', body: new URLSearchParams({ id: accessoryId }) });
+            toast('Accesorio eliminado.');
+            await loadWorkshopData({ quiet: true });
+        } catch (error) {
+            toast(error.message || 'No se pudo eliminar el accesorio.', 'error');
+        }
+    }
+
     function lightingBoardOptions() {
         const configured = state.boards.filter(board => board.ip || board.device).map(board => {
             const live = state.boardTelemetry.find(item => item.board_id === board.id || (board.ip && item.ip === board.ip) || (board.device && item.device === board.device));
@@ -555,6 +601,49 @@
                 state.overviewTab = 'lights';
                 await loadWorkshopData({ quiet: true });
                 toast('Iluminación agregada. Ya puedes asignarla a escenas por máquina.');
+            } catch (error) { toast(error.message, 'error'); button.disabled = false; }
+        });
+    }
+
+    function openRelayEditor(relayNumber) {
+        root.querySelector('#wsa-relay-modal')?.remove();
+        const boards = lightingBoardOptions();
+        root.insertAdjacentHTML('beforeend', `<div class="wsa-lighting-modal" id="wsa-relay-modal"><div class="wsa-lighting-backdrop" data-wsa-relay-close></div>
+            <form class="wsa-lighting-dialog" id="wsa-relay-form">
+                <button type="button" class="wsa-lighting-close" data-wsa-relay-close>×</button>
+                <div class="wsa-lighting-heading">${icon(ICON_PLUG, 24)}<div><small>SALIDA DE LA PLACA</small><h2>Registrar Relé ${relayNumber}</h2><p>La placa ya reportó este relé -- solo falta ponerle nombre.</p></div></div>
+                <label><span>Placa</span><select id="wsa-relay-board">${boards.map(board => `<option value="${esc(board.id)}">${esc(board.name)}${board.ip || board.device ? ` · ${esc(board.ip || board.device)}` : ''}</option>`).join('')}</select></label>
+                <label id="wsa-relay-manual-ip" hidden><span>IP de la placa</span><input id="wsa-relay-ip" placeholder="Ej. 192.168.0.85"></label>
+                <label><span>Nombre</span><input id="wsa-relay-name" required value="Relé ${relayNumber}" placeholder="Ej. Ventilador extractor"></label>
+                <label><span>Número de relé</span><input id="wsa-relay-number" type="number" min="1" max="16" value="${relayNumber}" required></label>
+                <div class="wsa-lighting-credentials" id="wsa-relay-credentials"><label><span>Usuario OTA</span><input id="wsa-relay-user" value="admin" autocomplete="username"></label><label><span>Contraseña OTA</span><input id="wsa-relay-pass" type="password" autocomplete="current-password"></label></div>
+                <div class="wsa-lighting-actions"><button type="button" class="wsa-btn" data-wsa-relay-close>Cancelar</button><button type="submit" class="wsa-btn wsa-btn-accent">Registrar relé</button></div>
+            </form></div>`);
+        root.querySelectorAll('[data-wsa-relay-close]').forEach(button => button.addEventListener('click', () => root.querySelector('#wsa-relay-modal')?.remove()));
+        const boardSelect = root.querySelector('#wsa-relay-board');
+        const syncBoard = () => {
+            const board = boards.find(item => item.id === boardSelect.value) || boards[0];
+            root.querySelector('#wsa-relay-manual-ip').hidden = !board.manual;
+            root.querySelector('#wsa-relay-credentials').hidden = Boolean(board.device);
+        };
+        boardSelect.addEventListener('change', syncBoard);
+        syncBoard();
+        root.querySelector('#wsa-relay-form').addEventListener('submit', async event => {
+            event.preventDefault();
+            const button = event.submitter;
+            button.disabled = true;
+            const board = boards.find(item => item.id === boardSelect.value) || boards[0];
+            try {
+                await api('/api/accessories/arduino/relay', { method: 'POST', body: new URLSearchParams({
+                    name: root.querySelector('#wsa-relay-name').value.trim(),
+                    transport: board.device ? 'usb' : 'wifi', ip: board.ip || root.querySelector('#wsa-relay-ip').value.trim(), device: board.device || '',
+                    username: root.querySelector('#wsa-relay-user').value, password: root.querySelector('#wsa-relay-pass').value,
+                    relay: root.querySelector('#wsa-relay-number').value,
+                }) });
+                root.querySelector('#wsa-relay-modal')?.remove();
+                state.overviewTab = 'relays';
+                await loadWorkshopData({ quiet: true });
+                toast('Relé registrado.');
             } catch (error) { toast(error.message, 'error'); button.disabled = false; }
         });
     }
@@ -1217,7 +1306,18 @@
                 <div class="wsa-panel-overlay" id="wsa-manageboards-panel" hidden>
                     <div class="wsa-panel-backdrop" data-wsa-close-manageboards></div>
                     <div class="wsa-panel-dialog wsa-manageboards-dialog">
-                        <div class="wsa-panel-header"><span><strong>Gestionar placas</strong><small>Edita el nombre, puerto USB o IP de cada placa, o eliminala.</small></span><button type="button" data-wsa-close-manageboards>×</button></div>
+                        <button type="button" class="wsa-manageboards-close" data-wsa-close-manageboards>×</button>
+                        <img class="wsa-manageboards-cactus wsa-manageboards-cactus-left" src="/static/img/cactus1.png" alt="">
+                        <img class="wsa-manageboards-cactus wsa-manageboards-cactus-right" src="/static/img/cactus2.png" alt="">
+                        <div class="wsa-manageboards-header">
+                            <div class="wsa-manageboards-hexagon">${icon(ICON_LAYOUT, 24)}</div>
+                            <div class="wsa-manageboards-title-row">
+                                <svg class="wsa-manageboards-trace" width="34" height="10" viewBox="0 0 44 12" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M44 6 H28 M28 6 L24 2 M24 2 H12 M12 2 V10 M12 10 H0"/></svg>
+                                <h2>Gestionar placas</h2>
+                                <svg class="wsa-manageboards-trace" width="34" height="10" viewBox="0 0 44 12" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M0 6 H16 M16 6 L20 2 M20 2 H32 M32 2 V10 M32 10 H44"/></svg>
+                            </div>
+                            <p>Edita el nombre, puerto USB o IP de cada placa, o elimínala.</p>
+                        </div>
                         <div class="wsa-manageboards-list" id="wsa-manageboards-list"></div>
                     </div>
                 </div>
@@ -1305,14 +1405,17 @@
     }
 
     function wizardDeviceInfoHtml(info) {
-        return `<div class="wsa-info-grid">
-            ${info.chip ? `<div><label>Chip</label><strong>${esc(info.chip)}</strong></div>` : ''}
-            <div><label>Firmware</label><strong>v${esc(info.firmware || '—')}</strong></div>
-            <div><label>${info.device ? 'Puerto' : 'IP'}</label><strong>${esc(info.device || info.ip || '—')}</strong></div>
-            <div><label>Relés</label><strong>${info.relays ?? '—'}</strong></div>
-            <div><label>LED PWM</label><strong>${info.pwm_led ? 'Sí' : 'No'}</strong></div>
-            <div><label>WS2812</label><strong>${info.ws2812 ? `Sí (${info.ws2812_count || 0} px)` : 'No'}</strong></div>
-        </div>`;
+        const tiles = [
+            info.chip ? [ICON_CPU, 'Chip', esc(info.chip)] : null,
+            [ICON_ZAP, 'Firmware', `v${esc(info.firmware || '—')}`],
+            [ICON_TERMINAL, info.device ? 'Puerto' : 'IP', esc(info.device || info.ip || '—')],
+            [ICON_PLUG, 'Relés', info.relays ?? '—'],
+            [ICON_LED, 'LED PWM', info.pwm_led ? 'Sí' : 'No'],
+            [ICON_LED, 'WS2812', info.ws2812 ? `Sí (${info.ws2812_count || 0} px)` : 'No'],
+        ].filter(Boolean);
+        return `<div class="wsa-info-grid wsa-info-grid-device">${tiles.map(([iconBody, label, value]) =>
+            `<div class="wsa-info-tile"><span class="wsa-info-tile-icon">${icon(iconBody, 15)}</span><div><label>${label}</label><strong>${value}</strong></div></div>`
+        ).join('')}</div>`;
     }
 
     function viewWizard() {
@@ -1526,7 +1629,7 @@
             if (!count) return '<div class="wsa-classic-empty">La placa no reportó relés. Revisa la conexión o la configuración.</div>';
             return `<div class="wsa-classic-relays">${Array.from({ length: count }, (_, index) => {
                 const item = relays[index];
-                return `<article>${icon(ICON_PLUG, 22)}<p><strong>${esc(item?.name || `Relé ${index + 1}`)}</strong><span>${item ? esc(item.kind || `Salida ${index + 1}`) : 'Sin registrar en NOPAL'}</span></p>${item ? `<label class="wsa-switch"><input type="checkbox" data-wsa-workshop-power="${esc(item.id)}" ${item.on ? 'checked' : ''} ${item.on === null ? 'disabled' : ''}><span></span></label>` : '<span class="wsa-classic-unassigned">Configurar</span>'}</article>`;
+                return `<article>${icon(ICON_PLUG, 22)}<p><strong>${esc(item?.name || `Relé ${index + 1}`)}</strong><span>${item ? esc(item.kind || `Salida ${index + 1}`) : 'Sin registrar en NOPAL'}</span></p>${item ? `<label class="wsa-switch"><input type="checkbox" data-wsa-workshop-power="${esc(item.id)}" ${item.on ? 'checked' : ''} ${item.on === null ? 'disabled' : ''}><span></span></label>` : `<span class="wsa-classic-unassigned" data-wsa-relay-configure="${index + 1}">Configurar</span>`}</article>`;
             }).join('')}</div><footer class="wsa-classic-control-footer"><span><i class="on"></i>${relays.filter(item => item.on).length} activos</span><span>${Math.max(0, count - relays.filter(item => item.on).length)} inactivos</span><button type="button" class="wsa-btn" id="wsa-workshop-add-accessory">Editar relés</button></footer>`;
         }
         if (state.overviewTab === 'lights') return workshopLightsPanel(leds);
@@ -1583,7 +1686,17 @@
     function workshopLightsPanel(leds) {
         if (!leds.length) return `<div class="wsa-card wsa-workshop-empty"><h2>${icon(ICON_LED, 16)}Iluminación</h2><p>No hay tiras LED registradas todavía.</p><button type="button" class="wsa-btn wsa-btn-accent" id="wsa-workshop-add-accessory">${icon(ICON_PLUS, 14)}<span>Agregar tira LED</span></button></div>`;
         return `<div class="wsa-card-title-row wsa-workshop-light-toolbar"><h2>${icon(ICON_LED, 16)}Iluminación registrada</h2><button type="button" class="wsa-btn wsa-btn-accent" id="wsa-workshop-add-accessory">${icon(ICON_PLUS, 13)}Agregar LED o tira</button></div><div class="wsa-workshop-led-grid">${leds.map(item => `<section class="wsa-card wsa-workshop-led">
-            <div class="wsa-card-title-row"><h2>${icon(ICON_LED, 16)}${esc(item.name)}</h2><span class="wsa-status-pill">${esc((item.config?.led_mode || 'LED').toUpperCase())}</span></div>
+            <div class="wsa-card-title-row">
+                <div class="wsa-card-title-group"><h2>${icon(ICON_LED, 16)}${esc(item.name)}</h2><span class="wsa-status-pill">${esc((item.config?.led_mode || 'LED').toUpperCase())}</span></div>
+                <div class="wsa-card-menu">
+                    <button type="button" class="wsa-card-menu-btn" data-wsa-led-menu-toggle="${esc(item.id)}" aria-label="Más opciones">${icon(ICON_MORE, 15)}</button>
+                    <div class="wsa-card-menu-dropdown" data-wsa-led-menu="${esc(item.id)}" hidden>
+                        <button type="button" data-wsa-led-view="${esc(item.id)}">${icon(ICON_ACTIVITY, 14)}<span>Ver detalles</span></button>
+                        <button type="button" data-wsa-led-firmware="${esc(item.id)}">${icon(ICON_ZAP, 14)}<span>Actualizar firmware</span></button>
+                        <button type="button" class="wsa-card-menu-danger" data-wsa-led-delete="${esc(item.id)}">${icon(ICON_CLOSE, 14)}<span>Eliminar</span></button>
+                    </div>
+                </div>
+            </div>
             <label><span>Color</span><input type="color" data-wsa-workshop-led-color="${esc(item.id)}" value="${rgbToHex(item.config?.led_color)}"></label>
             <button type="button" class="wsa-btn wsa-btn-accent" data-wsa-workshop-led-apply="${esc(item.id)}">Aplicar color</button>
             <div class="wsa-led-presets"><button type="button" data-wsa-led-preset="${esc(item.id)}:#000000">Apagar</button><button type="button" data-wsa-led-preset="${esc(item.id)}:#ffffff">Blanco</button><button type="button" data-wsa-led-preset="${esc(item.id)}:#22c55e">Listo</button><button type="button" data-wsa-led-preset="${esc(item.id)}:#ef4444">Alerta</button></div>
@@ -1648,7 +1761,7 @@
                 </div>
             </div>
 
-            ${board.connected && board.deviceInfo ? cardWrap('Datos reales de la placa (por USB, no mock)', ICON_CHECK, wizardDeviceInfoHtml(board.deviceInfo)) : ''}
+            ${board.connected && board.deviceInfo ? cardWrap(`Datos reales de la placa (por ${board.deviceInfo.device ? 'USB' : 'WiFi'}, no mock)`, ICON_CHECK, wizardDeviceInfoHtml(board.deviceInfo), 'wsa-card-verified') : ''}
 
             <div class="wsa-pinmap-grid">
                 <div class="wsa-card wsa-pinmap-card">
@@ -1946,6 +2059,9 @@
         });
 
         root.querySelector('#wsa-content').addEventListener('click', event => {
+            if (!event.target.closest('.wsa-card-menu')) {
+                root.querySelectorAll('.wsa-card-menu-dropdown').forEach(el => { el.hidden = true; });
+            }
             const viewButton = event.target.closest('[data-wsa-view]');
             if (viewButton) { switchWorkshopView(viewButton.dataset.wsaView); return; }
             if (event.target.closest('#wsa-docs-back')) { switchWorkshopView('overview'); return; }
@@ -1962,6 +2078,10 @@
                 }
                 return;
             }
+            const relayConfigure = event.target.closest('[data-wsa-relay-configure]');
+            if (relayConfigure) { openRelayEditor(Number(relayConfigure.dataset.wsaRelayConfigure)); return; }
+            const relayClose = event.target.closest('[data-wsa-relay-close]');
+            if (relayClose) { root.querySelector('#wsa-relay-modal')?.remove(); return; }
             const lightingClose = event.target.closest('[data-wsa-lighting-close]');
             if (lightingClose) { root.querySelector('#wsa-lighting-modal')?.remove(); return; }
             const ledPreset = event.target.closest('[data-wsa-led-preset]');
@@ -1972,6 +2092,29 @@
                 setWorkshopLedColor(ledApply.dataset.wsaWorkshopLedApply, color);
                 return;
             }
+            const ledMenuToggle = event.target.closest('[data-wsa-led-menu-toggle]');
+            if (ledMenuToggle) {
+                const id = ledMenuToggle.dataset.wsaLedMenuToggle;
+                const dropdown = root.querySelector(`[data-wsa-led-menu="${CSS.escape(id)}"]`);
+                const wasHidden = dropdown ? dropdown.hidden : true;
+                root.querySelectorAll('.wsa-card-menu-dropdown').forEach(el => { el.hidden = true; });
+                if (dropdown) dropdown.hidden = !wasHidden;
+                return;
+            }
+            const ledView = event.target.closest('[data-wsa-led-view]');
+            if (ledView) { openLedDetailsPanel(ledView.dataset.wsaLedView); return; }
+            const ledFirmware = event.target.closest('[data-wsa-led-firmware]');
+            if (ledFirmware) {
+                const accessory = state.accessories.find(item => item.id === ledFirmware.dataset.wsaLedFirmware);
+                if (accessory && typeof window.openFirmwareUpdateModal === 'function') {
+                    window.openFirmwareUpdateModal(accessory.id, accessory.name);
+                } else {
+                    toast('No se pudo abrir el actualizador de firmware.', 'error');
+                }
+                return;
+            }
+            const ledDelete = event.target.closest('[data-wsa-led-delete]');
+            if (ledDelete) { deleteWorkshopAccessory(ledDelete.dataset.wsaLedDelete); return; }
             const sceneButton = event.target.closest('[data-wsa-workshop-scene]');
             if (sceneButton) { runWorkshopScene(sceneButton.dataset.wsaWorkshopScene); return; }
 

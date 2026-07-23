@@ -251,12 +251,19 @@ def _arduino_http_request(
     if not ip:
         return None
     try:
+        # GET va por query string (?n=1, como siempre esperó el firmware).
+        # POST va por el cuerpo (form-urlencoded) -- WebServer del ESP32
+        # mezcla query+body en server.arg() y por eso nunca se notó, pero
+        # ESP8266WebServer (Nopal_FF, NodeMCU) NO lee query string en un
+        # POST: devolvía "ERR:UNSUPPORTED" para /api/led aunque las
+        # credenciales y el resto de los parámetros fueran correctos.
+        request_kwargs = {"params": params} if method.upper() == "GET" else {"data": params}
         response = requests.request(
             method,
             f"http://{ip}{path}",
-            params=params,
             auth=(config.get("ota_username", ""), config.get("ota_password", "")),
             timeout=HTTP_TIMEOUT,
+            **request_kwargs,
         )
         return response.text.strip() or None
     except requests.exceptions.RequestException as e:

@@ -227,6 +227,7 @@ async def accessory_arduino_lighting_endpoint(
     gpio: int = Form(...),
     count: int = Form(1),
     protocol: int = Form(0),
+    show_on_panel: bool = Form(True),
     user: dict = Depends(require_role("admin")),
 ):
     """Alta directa de una luz conectada a una placa NOPAL existente.
@@ -256,6 +257,7 @@ async def accessory_arduino_lighting_endpoint(
         "led_count": count,
         "ws2812_count": count if mode == "ws2812" else 0,
         "protocol": protocol,
+        "show_on_panel": show_on_panel,
     }
     if transport == "wifi":
         config.update({"ip": ip.strip(), "ota_username": username, "ota_password": password})
@@ -435,6 +437,27 @@ async def accessory_scenes_create_endpoint(
         scene = accessory_scenes.create_scene(name, actions_list)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    return scene
+
+
+@router.put("/api/accessories/scenes/{scene_id}")
+async def accessory_scenes_update_endpoint(
+    scene_id: str,
+    name: str = Form(...),
+    actions: str = Form(...),
+    user: dict = Depends(require_role("admin")),
+):
+    """Igual que el POST de creación pero sobre una escena existente."""
+    try:
+        actions_list = json.loads(actions)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="El campo 'actions' no es un JSON válido")
+    try:
+        scene = accessory_scenes.update_scene(scene_id, name, actions_list)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Escena no encontrada")
     return scene
 
 

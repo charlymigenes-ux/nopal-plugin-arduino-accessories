@@ -71,6 +71,30 @@ def create_scene(name: str, actions: List[Dict[str, Any]]) -> Dict[str, Any]:
     return scene
 
 
+def update_scene(scene_id: str, name: str, actions: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Igual que create_scene pero sobre una escena ya existente -- conserva
+    id y created_at, solo reemplaza nombre y acciones."""
+    if not name:
+        raise ValueError("La escena necesita un nombre")
+    if not actions:
+        raise ValueError("La escena necesita al menos una acción")
+    for action in actions:
+        if not action.get("accessory_id"):
+            raise ValueError("Cada acción necesita un accessory_id")
+        if "color" not in action and "on" not in action:
+            raise ValueError("Cada acción necesita 'on' o 'color'")
+
+    with _lock:
+        scenes = _read()
+        scene = next((s for s in scenes if s.get("id") == scene_id), None)
+        if scene is None:
+            raise KeyError(scene_id)
+        scene["name"] = name
+        scene["actions"] = actions
+        _write(scenes)
+    return scene
+
+
 def delete_scene(scene_id: str) -> bool:
     with _lock:
         scenes = _read()

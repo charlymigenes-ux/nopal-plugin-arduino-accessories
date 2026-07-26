@@ -562,6 +562,8 @@
                 <div class="wsa-lighting-preview" id="wsa-lighting-preview"></div>
                 <div class="wsa-lighting-credentials" id="wsa-lighting-credentials"><label><span>Usuario OTA</span><input id="wsa-lighting-user" value="admin" autocomplete="username"></label><label><span>Contraseña OTA</span><input id="wsa-lighting-pass" type="password" autocomplete="current-password"></label></div>
                 <p class="wsa-lighting-note">La cantidad puede ser 1 para un solo NeoPixel, 8 para tu tira actual o cualquier longitud que tenga configurada el firmware de esa placa.</p>
+                <label class="wsa-showall-toggle"><input type="checkbox" id="wsa-lighting-show-on-panel" checked><span></span> Mostrar en panel</label>
+                <p class="wsa-lighting-note">Si la dejas activada, la ficha de cada dispositivo que tenga "Usar alertas visuales" activado con esta tira mostrará una réplica de sus LEDs -- por ejemplo, si esta tira enciende 4 LEDs por el estado de una impresora, esa impresora también los va a mostrar en su propia tarjeta.</p>
                 <div class="wsa-lighting-actions"><button type="button" class="wsa-btn" data-wsa-lighting-close>Cancelar</button><button type="submit" class="wsa-btn wsa-btn-accent">Agregar iluminación</button></div>
             </form></div>`);
         root.querySelectorAll('[data-wsa-lighting-close]').forEach(button => button.addEventListener('click', () => root.querySelector('#wsa-lighting-modal')?.remove()));
@@ -596,6 +598,7 @@
                     username: root.querySelector('#wsa-lighting-user').value, password: root.querySelector('#wsa-lighting-pass').value,
                     mode: root.querySelector('#wsa-lighting-mode').value, gpio: root.querySelector('#wsa-lighting-gpio').value,
                     count: countInput.value, protocol: info.protocol || 0,
+                    show_on_panel: root.querySelector('#wsa-lighting-show-on-panel').checked,
                 }) });
                 root.querySelector('#wsa-lighting-modal')?.remove();
                 state.overviewTab = 'lights';
@@ -657,6 +660,120 @@
         } catch (error) {
             toast(error.message || 'No se pudo ejecutar la escena.', 'error');
         }
+    }
+
+    // Una fila de acción dentro del editor de escenas: qué accesorio y qué
+    // hacerle (encender / apagar / fijar color). Mismo shape que ya usa
+    // accessory_scenes.py -- {accessory_id, on} o {accessory_id, color}.
+    function sceneActionRowHtml(action, accessories) {
+        const hasColor = Array.isArray(action.color);
+        const type = hasColor ? 'color' : (action.on ? 'on' : 'off');
+        return `<div class="wsa-scene-action-row" data-scene-action-row>
+            <select data-scene-action-accessory>${accessories.map(item => `<option value="${esc(item.id)}" ${item.id === action.accessory_id ? 'selected' : ''}>${esc(item.name)}</option>`).join('')}</select>
+            <select data-scene-action-type>
+                <option value="on" ${type === 'on' ? 'selected' : ''}>Encender</option>
+                <option value="off" ${type === 'off' ? 'selected' : ''}>Apagar</option>
+                <option value="color" ${type === 'color' ? 'selected' : ''}>Fijar color</option>
+            </select>
+            <input type="color" data-scene-action-color value="${rgbToHex(action.color)}" ${type === 'color' ? '' : 'hidden'}>
+            <button type="button" class="wsa-card-menu-btn wsa-btn-icon-danger" data-scene-action-remove title="Quitar acción">${icon(ICON_CLOSE, 14)}</button>
+        </div>`;
+    }
+
+    function openSceneEditor(sceneId = null) {
+        root.querySelector('#wsa-scene-modal')?.remove();
+        const scene = sceneId ? state.scenes.find(item => item.id === sceneId) : null;
+        const accessories = state.accessories;
+        if (!accessories.length) {
+            toast('Registra al menos un accesorio (relé o LED) antes de crear una escena.', 'error');
+            return;
+        }
+        const actions = scene?.actions?.length ? scene.actions : [{ accessory_id: accessories[0].id, on: true }];
+        root.insertAdjacentHTML('beforeend', `<div class="wsa-lighting-modal" id="wsa-scene-modal"><div class="wsa-lighting-backdrop" data-wsa-scene-close></div>
+            <form class="wsa-lighting-dialog" id="wsa-scene-form">
+                <button type="button" class="wsa-lighting-close" data-wsa-scene-close>×</button>
+                <div class="wsa-lighting-heading">${icon(ICON_SCENE, 24)}<div><small>MACRO DEL TALLER</small><h2>${scene ? 'Editar escena' : 'Nueva escena'}</h2><p>Aplica varias acciones sobre tus relés y luces con un solo botón.</p></div></div>
+                <label><span>Nombre</span><input id="wsa-scene-name" required maxlength="60" value="${esc(scene?.name || '')}" placeholder="Ej. Taller ON"></label>
+                <div class="wsa-scene-actions" id="wsa-scene-actions">${actions.map(action => sceneActionRowHtml(action, accessories)).join('')}</div>
+                <button type="button" class="wsa-btn wsa-btn-small" id="wsa-scene-add-action">${icon(ICON_PLUS, 13)}<span>Agregar acción</span></button>
+                <div class="wsa-lighting-actions">
+                    ${scene ? `<button type="button" class="wsa-btn wsa-btn-icon-danger" id="wsa-scene-delete" style="width:auto;padding:9px 14px;margin-right:auto;">${icon(ICON_CLOSE, 14)}<span>Eliminar</span></button>` : ''}
+                    <button type="button" class="wsa-btn" data-wsa-scene-close>Cancelar</button>
+                    <button type="submit" class="wsa-btn wsa-btn-accent">${scene ? 'Guardar cambios' : 'Crear escena'}</button>
+                </div>
+            </form></div>`);
+
+        const actionsList = root.querySelector('#wsa-scene-actions');
+
+        const syncRowType = row => {
+            const type = row.querySelector('[data-scene-action-type]').value;
+            row.querySelector('[data-scene-action-color]').hidden = type !== 'color';
+        };
+
+        const wireRow = row => {
+            row.querySelector('[data-scene-action-type]').addEventListener('change', () => syncRowType(row));
+            row.querySelector('[data-scene-action-remove]').addEventListener('click', () => {
+                if (actionsList.querySelectorAll('[data-scene-action-row]').length <= 1) {
+                    toast('La escena necesita al menos una acción.', 'error');
+                    return;
+                }
+                row.remove();
+            });
+        };
+        actionsList.querySelectorAll('[data-scene-action-row]').forEach(wireRow);
+
+        root.querySelectorAll('[data-wsa-scene-close]').forEach(button => button.addEventListener('click', () => root.querySelector('#wsa-scene-modal')?.remove()));
+
+        root.querySelector('#wsa-scene-add-action').addEventListener('click', () => {
+            actionsList.insertAdjacentHTML('beforeend', sceneActionRowHtml({ accessory_id: accessories[0].id, on: true }, accessories));
+            wireRow(actionsList.lastElementChild);
+        });
+
+        if (scene) {
+            root.querySelector('#wsa-scene-delete').addEventListener('click', async () => {
+                const message = `Vas a eliminar la escena "${scene.name}". Esta acción no se puede deshacer.`;
+                const confirmed = typeof window.appConfirm === 'function'
+                    ? await window.appConfirm(message, 'Eliminar escena', 'danger')
+                    : window.confirm(message);
+                if (!confirmed) return;
+                try {
+                    await api(`/api/accessories/scenes/${encodeURIComponent(scene.id)}`, { method: 'DELETE' });
+                    root.querySelector('#wsa-scene-modal')?.remove();
+                    toast('Escena eliminada.');
+                    await loadWorkshopData({ quiet: true });
+                } catch (error) {
+                    toast(error.message || 'No se pudo eliminar la escena.', 'error');
+                }
+            });
+        }
+
+        root.querySelector('#wsa-scene-form').addEventListener('submit', async event => {
+            event.preventDefault();
+            const button = event.submitter;
+            button.disabled = true;
+            const name = root.querySelector('#wsa-scene-name').value.trim();
+            const actionsPayload = [...actionsList.querySelectorAll('[data-scene-action-row]')].map(row => {
+                const accessoryId = row.querySelector('[data-scene-action-accessory]').value;
+                const type = row.querySelector('[data-scene-action-type]').value;
+                if (type === 'color') {
+                    return { accessory_id: accessoryId, color: hexToRgb(row.querySelector('[data-scene-action-color]').value) || [0, 0, 0] };
+                }
+                return { accessory_id: accessoryId, on: type === 'on' };
+            });
+            try {
+                const url = scene ? `/api/accessories/scenes/${encodeURIComponent(scene.id)}` : '/api/accessories/scenes';
+                await api(url, {
+                    method: scene ? 'PUT' : 'POST',
+                    body: new URLSearchParams({ name, actions: JSON.stringify(actionsPayload) }),
+                });
+                root.querySelector('#wsa-scene-modal')?.remove();
+                toast(scene ? 'Escena actualizada.' : 'Escena creada.');
+                await loadWorkshopData({ quiet: true });
+            } catch (error) {
+                toast(error.message || 'No se pudo guardar la escena.', 'error');
+                button.disabled = false;
+            }
+        });
     }
 
     function activeBoard() {
@@ -1611,8 +1728,8 @@
                 </section>
 
                 <section class="wsa-classic-panel wsa-classic-scenes">
-                    <h2>${icon(ICON_SCENE, 17)}Macros y escenas</h2>
-                    <div>${state.scenes.length ? state.scenes.map(scene => `<button type="button" class="wsa-btn" data-wsa-workshop-scene="${esc(scene.id)}">${icon(ICON_ZAP, 14)}${esc(scene.name)}</button>`).join('') : '<span class="wsa-empty">No hay escenas guardadas.</span>'}</div>
+                    <div class="wsa-card-title-row"><h2>${icon(ICON_SCENE, 17)}Macros y escenas</h2><button type="button" class="wsa-btn wsa-btn-small" id="wsa-scene-new">${icon(ICON_PLUS, 13)}<span>Nueva</span></button></div>
+                    <div class="wsa-scene-list">${state.scenes.length ? state.scenes.map(scene => `<div class="wsa-scene-row"><button type="button" class="wsa-btn" data-wsa-workshop-scene="${esc(scene.id)}">${icon(ICON_ZAP, 14)}${esc(scene.name)}</button><button type="button" class="wsa-card-menu-btn" data-wsa-scene-edit="${esc(scene.id)}" title="Editar escena">${icon(ICON_GEAR, 14)}</button></div>`).join('') : '<span class="wsa-empty">No hay escenas guardadas.</span>'}</div>
                 </section>
 
                 <section class="wsa-classic-panel wsa-classic-device">
@@ -1627,9 +1744,20 @@
         if (state.overviewTab === 'relays') {
             const count = Math.max(relays.length, Number(info.relays || 0));
             if (!count) return '<div class="wsa-classic-empty">La placa no reportó relés. Revisa la conexión o la configuración.</div>';
+            // Antes se usaba relays[index] -- posición en el array de
+            // registrados, no el número de relé real (config.relay). Si un
+            // accesorio se registraba fuera de orden, o dos apuntaban al
+            // mismo relay por error, las tarjetas mostraban nombres/switches
+            // en el slot equivocado. Ahora se busca por config.relay real.
+            const relaysByNumber = {};
+            relays.forEach(item => {
+                const relayNumber = Number(item.config?.relay);
+                if (relayNumber) relaysByNumber[relayNumber] = item;
+            });
             return `<div class="wsa-classic-relays">${Array.from({ length: count }, (_, index) => {
-                const item = relays[index];
-                return `<article>${icon(ICON_PLUG, 22)}<p><strong>${esc(item?.name || `Relé ${index + 1}`)}</strong><span>${item ? esc(item.kind || `Salida ${index + 1}`) : 'Sin registrar en NOPAL'}</span></p>${item ? `<label class="wsa-switch"><input type="checkbox" data-wsa-workshop-power="${esc(item.id)}" ${item.on ? 'checked' : ''} ${item.on === null ? 'disabled' : ''}><span></span></label>` : `<span class="wsa-classic-unassigned" data-wsa-relay-configure="${index + 1}">Configurar</span>`}</article>`;
+                const slotNumber = index + 1;
+                const item = relaysByNumber[slotNumber];
+                return `<article>${icon(ICON_PLUG, 22)}<p><strong>${esc(item?.name || `Relé ${slotNumber}`)}</strong><span>${item ? esc(item.kind || `Salida ${slotNumber}`) : 'Sin registrar en NOPAL'}</span></p>${item ? `<label class="wsa-switch"><input type="checkbox" data-wsa-workshop-power="${esc(item.id)}" ${item.on ? 'checked' : ''} ${item.on === null ? 'disabled' : ''}><span></span></label>` : `<span class="wsa-classic-unassigned" data-wsa-relay-configure="${slotNumber}">Configurar</span>`}</article>`;
             }).join('')}</div><footer class="wsa-classic-control-footer"><span><i class="on"></i>${relays.filter(item => item.on).length} activos</span><span>${Math.max(0, count - relays.filter(item => item.on).length)} inactivos</span><button type="button" class="wsa-btn" id="wsa-workshop-add-accessory">Editar relés</button></footer>`;
         }
         if (state.overviewTab === 'lights') return workshopLightsPanel(leds);
@@ -1720,9 +1848,9 @@
     }
 
     function workshopScenesPanel() {
-        if (!state.scenes.length) return `<div class="wsa-card wsa-workshop-empty"><h2>${icon(ICON_SCENE, 16)}Escenas</h2><p>Crea una escena para encender relés y ajustar luces con una sola acción.</p><button type="button" class="wsa-btn wsa-btn-accent" id="wsa-workshop-add-accessory">Ir a Accesorios</button></div>`;
-        return `<section class="wsa-card"><div class="wsa-card-title-row"><h2>${icon(ICON_SCENE, 16)}Acciones rápidas</h2><small class="wsa-text-muted">${state.scenes.length} escena(s)</small></div>
-            <div class="wsa-workshop-scenes">${state.scenes.map(scene => `<button type="button" class="wsa-btn" data-wsa-workshop-scene="${esc(scene.id)}">${icon(ICON_ZAP, 14)}<span>${esc(scene.name)}</span><small>${scene.actions?.length || 0} acción(es)</small></button>`).join('')}</div></section>`;
+        if (!state.scenes.length) return `<div class="wsa-card wsa-workshop-empty"><h2>${icon(ICON_SCENE, 16)}Escenas</h2><p>Crea una escena para encender relés y ajustar luces con una sola acción.</p><button type="button" class="wsa-btn wsa-btn-accent" id="wsa-scene-new">${icon(ICON_PLUS, 14)}<span>Nueva escena</span></button></div>`;
+        return `<section class="wsa-card"><div class="wsa-card-title-row"><h2>${icon(ICON_SCENE, 16)}Acciones rápidas</h2><button type="button" class="wsa-btn wsa-btn-small wsa-btn-accent" id="wsa-scene-new">${icon(ICON_PLUS, 13)}<span>Nueva escena</span></button></div>
+            <div class="wsa-workshop-scenes">${state.scenes.map(scene => `<div class="wsa-scene-card"><button type="button" class="wsa-btn" data-wsa-workshop-scene="${esc(scene.id)}">${icon(ICON_ZAP, 14)}<span>${esc(scene.name)}</span><small>${scene.actions?.length || 0} acción(es)</small></button><button type="button" class="wsa-card-menu-btn" data-wsa-scene-edit="${esc(scene.id)}" title="Editar escena">${icon(ICON_GEAR, 14)}</button></div>`).join('')}</div></section>`;
     }
 
     function workshopLatestActivity() {
@@ -2117,6 +2245,9 @@
             if (ledDelete) { deleteWorkshopAccessory(ledDelete.dataset.wsaLedDelete); return; }
             const sceneButton = event.target.closest('[data-wsa-workshop-scene]');
             if (sceneButton) { runWorkshopScene(sceneButton.dataset.wsaWorkshopScene); return; }
+            if (event.target.closest('#wsa-scene-new')) { openSceneEditor(); return; }
+            const sceneEdit = event.target.closest('[data-wsa-scene-edit]');
+            if (sceneEdit) { openSceneEditor(sceneEdit.dataset.wsaSceneEdit); return; }
 
             const boardTab = event.target.closest('[data-wsa-board]');
             if (boardTab) { state.activeBoardId = boardTab.dataset.wsaBoard; state.selectedPinKey = null; render(); return; }

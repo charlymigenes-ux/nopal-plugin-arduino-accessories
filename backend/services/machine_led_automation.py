@@ -121,6 +121,10 @@ def get_led_targets() -> List[Dict[str, Any]]:
             "led_count": count,
             "protocol": protocol,
             "segment_capable": bool(config.get("segment_capable") or protocol >= 4),
+            # Tiras registradas antes de que existiera este checkbox no tienen
+            # la clave todavía -- default True para no apagarles silenciosamente
+            # una réplica que antes no existía y que nadie pidió desactivar.
+            "show_on_panel": bool(config.get("show_on_panel", True)),
         })
     return targets
 
@@ -231,40 +235,48 @@ async def apply_state(
 ) -> Dict[str, Any]:
     config = get_config(machine_type, machine_id)
     if config is None or not config.get("enabled"):
-        return {"applied": False, "reason": "not_configured"}
+        return {"applied": False, "reason": "not_configured", "show_on_panel": False, "runs": []}
     state = state if state in VISUAL_STATES else "idle"
     key = machine_key(machine_type, machine_id)
     use_gradient = state in ("heating", "cooling") and progress is not None
 
-    # Para heating/cooling con progreso, el "estado ya aplicado" no alcanza
-    # para deduplicar -- el progreso sigue cambiando aunque el estado no
-    # cambie. Se deduplica contra la cantidad de LEDs prendidos (lo único
-    # que de verdad se ve distinto), no contra el % crudo.
     if use_gradient:
+        runs = _heat_gradient_runs(config["count"], progress)
+        # Para heating/cooling con progreso, el "estado ya aplicado" no
+        # alcanza para deduplicar -- el progreso sigue cambiando aunque el
+        # estado no cambie. Se deduplica contra la cantidad de LEDs
+        # prendidos (lo único que de verdad se ve distinto), no contra el
+        # % crudo.
         filled = round(config["count"] * max(0, min(100, progress)) / 100)
         dedup_value: Any = (state, filled)
     else:
-        dedup_value = state
-    if _last_applied_state.get(key) == dedup_value:
-        return {"applied": False, "reason": "unchanged"}
-
-    if use_gradient:
-        runs = _heat_gradient_runs(config["count"], progress)
-        result = True
-        for run in runs:
-            run_ok = await accessory_service.set_accessory_led_segment(
-                config["accessory_id"], config["start"] + run["start"], run["count"], *run["color"]
-            )
-            result = result and bool(run_ok)
-        detail = {"machine": key, "state": state, "progress": progress, "runs": len(runs)}
-    else:
         color = config["colors"].get(state, DEFAULT_COLORS[state])
-        result = await accessory_service.set_accessory_led_segment(
-            config["accessory_id"], config["start"], config["count"], *color
+        runs = [{"start": 0, "count": config["count"], "color": color}] if config["count"] > 0 else []
+        dedup_value = state
+
+    # Lectura directa del registro (sin pasar por get_led_targets(), que hace
+    # un sondeo de red en vivo para refrescar protocolo/cantidad de LEDs) --
+    # "mostrar en panel" es una preferencia guardada en NOPAL, nunca depende
+    # del hardware, así que no vale la pena esa latencia extra en cada
+    # actualización de estado (esto corre en cada ciclo de polling).
+    accessory_config = accessory_service.get_accessory_connection(config["accessory_id"]) or {}
+    render_info = {"runs": runs, "show_on_panel": bool(accessory_config.get("show_on_panel", True))}
+
+    # El panel necesita esta info (para dibujar la réplica en la tarjeta)
+    # incluso cuando el estado no cambió y no hay nada nuevo que escribirle
+    # al hardware -- por eso se devuelve siempre, deduplicación aparte.
+    if _last_applied_state.get(key) == dedup_value:
+        return {"applied": False, "reason": "unchanged", **render_info}
+
+    result = True
+    for run in runs:
+        run_ok = await accessory_service.set_accessory_led_segment(
+            config["accessory_id"], config["start"] + run["start"], run["count"], *run["color"]
         )
-        detail = {"machine": key, "state": state, "start": config["start"], "count": config["count"], "color": color}
+        result = result and bool(run_ok)
+    detail = {"machine": key, "state": state, "progress": progress, "runs": len(runs)}
 
     if result:
         _last_applied_state[key] = dedup_value
         log_event(config["accessory_id"], config.get("machine_name", machine_id), "machine_led_state", detail)
-    return {"applied": bool(result), "reason": None if result else "hardware_error"}
+    return {"applied": bool(result), "reason": None if result else "hardware_error", **render_info}

@@ -9,7 +9,7 @@
     --wsa-control: color-mix(in srgb, var(--bg) 74%, var(--card-bg));
     --wsa-border: var(--border);
     --wsa-text-muted: var(--text-muted);
-    background: var(--bg);
+    background: linear-gradient(180deg, rgba(0, 0, 0, 0.4), transparent);
     color: var(--text);
     display: flex;
     flex-direction: column;
@@ -545,6 +545,9 @@
 .wsa-workshop-scenes .wsa-btn { width: 100%; justify-content: flex-start; }
 .wsa-workshop-scenes .wsa-btn span { flex: 1; text-align: left; }
 .wsa-workshop-scenes .wsa-btn small { color: var(--text-muted); }
+.wsa-scene-card { display: flex; align-items: stretch; gap: 6px; min-width: 0; }
+.wsa-scene-card .wsa-btn { flex: 1; min-width: 0; }
+.wsa-scene-card .wsa-card-menu-btn { flex-shrink: 0; }
 .wsa-workshop-empty { text-align: center; }
 .wsa-workshop-empty h2 { justify-content: center; }
 .wsa-workshop-loading { display: flex; align-items: center; justify-content: center; gap: 12px; min-height: 120px; }
@@ -884,7 +887,9 @@
 .wsa-classic-activity li { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; gap: 8px; margin-bottom: 12px; font-size: .69rem; }
 .wsa-classic-activity li svg { color: #8998a3; }
 .wsa-classic-activity time { color: var(--text-muted); font-size: .64rem; }
-.wsa-classic-scenes > div { display: flex; flex-wrap: wrap; gap: 7px; }
+.wsa-scene-list { display: flex; flex-wrap: wrap; gap: 7px; }
+.wsa-scene-row { display: flex; align-items: stretch; gap: 6px; }
+.wsa-scene-row .wsa-btn { width: auto; }
 .wsa-classic-device-body { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .wsa-classic-device dl { display: grid; grid-template-columns: auto 1fr; gap: 7px 10px; margin: 0; padding-right: 12px; border-right: 1px solid var(--wsa-border); font-size: .67rem; }
 .wsa-classic-device dt, .wsa-classic-device-body > div span { color: var(--text-muted); }
@@ -941,6 +946,12 @@
 .wsa-lighting-preview i { width: 17px; height: 17px; border-radius: 5px; background: #57e04b; box-shadow: 0 0 9px #57e04b77; }
 .wsa-lighting-preview span { color: var(--text-muted); font-size: .7rem; }
 .wsa-lighting-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 18px; }
+.wsa-scene-actions { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.wsa-scene-action-row { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) 34px 28px; align-items: center; gap: 8px; }
+.wsa-scene-action-row select, .wsa-scene-action-row input[type="color"] { margin: 0; }
+.wsa-scene-action-row input[type="color"] { width: 100%; height: 34px; padding: 3px; }
+.wsa-scene-action-row input[type="color"][hidden] { display: block; visibility: hidden; pointer-events: none; }
+@media (max-width: 620px) { .wsa-scene-action-row { grid-template-columns: 1fr 1fr; grid-template-rows: auto auto; } .wsa-scene-action-row input[type="color"] { grid-column: 1; } .wsa-scene-action-row [data-scene-action-remove] { grid-column: 2; justify-self: end; } }
 .wsa-workshop-light-toolbar { margin-bottom: 10px; }
 .wsa-led-presets { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
 .wsa-led-presets button { padding: 6px 4px; border: 1px solid var(--wsa-border); border-radius: 7px; background: var(--wsa-control); color: var(--text-secondary); cursor: pointer; font-size: .65rem; }

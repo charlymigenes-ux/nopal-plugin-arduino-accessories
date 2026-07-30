@@ -6,6 +6,9 @@ sin depender de enchufes WiFi de terceros. Incluye detección automática por
 USB, escenas (macros de varios accesorios a la vez), registro de actividad
 reciente y actualización de firmware por USB (esptool) u OTA.
 
+<img width="1672" height="941" alt="AccesoriosArduino" src="https://github.com/user-attachments/assets/93f7cb21-f283-46f4-8705-79c4758174a5" />
+
+
 La portada **Control del taller** reúne el uso diario en una sola vista:
 estado real de relés, control RGB de iluminación, telemetría de cada placa,
 escenas persistidas y actividad reciente. El mapa de pines, flasheo,

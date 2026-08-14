@@ -168,6 +168,61 @@ class TestProbeWifiBoard:
             "wifi_connected": True,
         }
 
+    def test_dht_sensor_is_included_when_firmware_reports_it(self, monkeypatch):
+        status_json = {
+            "role": "accessory",
+            "firmware": "4.5.0-ff",
+            "wifi": {"connected": True},
+            "io": {"relays": 4, "pwm_led": True, "ws2812": True, "ws2812_count": 20},
+            "dht": {"enabled": True, "pin": 32, "valid": True, "t_c": 24.0, "h_pct": 55.0},
+        }
+        monkeypatch.setattr(
+            accessory_service.requests, "get",
+            lambda url, auth=None, timeout=None: _FakeResponse(json_data=status_json),
+        )
+        board = accessory_service.probe_wifi_board("192.168.1.50", "nopal", "secreto")
+
+        assert board["dht_enabled"] is True
+        assert board["dht_valid"] is True
+        assert board["dht_temp_c"] == 24.0
+        assert board["dht_humidity_pct"] == 55.0
+        assert board["dht_pin"] == 32
+
+    def test_dht_sensor_disabled_is_reported_without_readings(self, monkeypatch):
+        status_json = {
+            "role": "accessory",
+            "firmware": "4.5.0-ff",
+            "wifi": {"connected": True},
+            "io": {"relays": 4},
+            "dht": {"enabled": False},
+        }
+        monkeypatch.setattr(
+            accessory_service.requests, "get",
+            lambda url, auth=None, timeout=None: _FakeResponse(json_data=status_json),
+        )
+        board = accessory_service.probe_wifi_board("192.168.1.50", "nopal", "secreto")
+
+        assert board["dht_enabled"] is False
+        assert "dht_valid" not in board
+        assert "dht_temp_c" not in board
+
+    def test_firmware_without_dht_field_omits_it_entirely(self, monkeypatch):
+        # Mismo caso que test_success_returns_capabilities: un firmware
+        # viejo que ni siquiera manda "dht" no debe inventarse el campo.
+        status_json = {
+            "role": "accessory",
+            "firmware": "1.3",
+            "wifi": {"connected": True},
+            "io": {"relays": 4},
+        }
+        monkeypatch.setattr(
+            accessory_service.requests, "get",
+            lambda url, auth=None, timeout=None: _FakeResponse(json_data=status_json),
+        )
+        board = accessory_service.probe_wifi_board("192.168.1.50", "nopal", "secreto")
+
+        assert "dht_enabled" not in board
+
     def test_non_nopal_board_returns_none(self, monkeypatch):
         monkeypatch.setattr(
             accessory_service.requests, "get",

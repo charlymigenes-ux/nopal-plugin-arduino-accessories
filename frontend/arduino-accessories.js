@@ -1,6 +1,6 @@
 (() => {
     const PLUGIN_ID = 'arduino-accessories';
-    const PLUGIN_VERSION = '2.5.0';
+    const PLUGIN_VERSION = '2.5.1';
     if (window.NopalPluginRegistry?.[PLUGIN_ID]) return;
 
     // Mismo patrón que font-library.js/svg-toolkit.js/spoolman.js/matriz-led.js:
@@ -170,7 +170,7 @@ const I18N = {
         boardConnectionLabel: 'Conexión de placa', onlineState: 'En línea', unconfirmedState: 'Sin confirmar',
         notConfiguredFem: 'No configurada', latencyWord: 'Latencia', nopalHandshake: 'Handshake NOPAL',
         heapAvailable: 'Heap disponible', noIpWord: 'Sin IP', uptimeWord: 'Uptime', sinceLastRestart: 'Desde el último reinicio',
-        inputAnalog: 'Entrada analógica', wifiSignal: 'Señal WiFi', localNetwork: 'Red local',
+        inputAnalog: 'Entrada analógica', wifiSignal: 'Señal WiFi', localNetwork: 'Red local', dhtSensorLabel: 'Sensor DHT11',
         boardTelemetry: 'Telemetría de la placa', lastRealHandshakeData: 'Datos del último handshake real',
         subScenes2: 'Escenas', createSceneHint: 'Crea una escena para encender relés y ajustar luces con una sola acción.',
         newSceneWord: 'Nueva escena', actionCount: '{count} acción(es)',
@@ -422,7 +422,7 @@ const I18N = {
         boardConnectionLabel: 'Board connection', onlineState: 'Online', unconfirmedState: 'Unconfirmed',
         notConfiguredFem: 'Not configured', latencyWord: 'Latency', nopalHandshake: 'NOPAL handshake',
         heapAvailable: 'Available heap', noIpWord: 'No IP', uptimeWord: 'Uptime', sinceLastRestart: 'Since last restart',
-        inputAnalog: 'Analog input', wifiSignal: 'WiFi signal', localNetwork: 'Local network',
+        inputAnalog: 'Analog input', wifiSignal: 'WiFi signal', localNetwork: 'Local network', dhtSensorLabel: 'DHT11 sensor',
         boardTelemetry: 'Board telemetry', lastRealHandshakeData: 'Data from the last real handshake',
         subScenes2: 'Scenes', createSceneHint: 'Create a scene to turn on relays and adjust lights with a single action.',
         newSceneWord: 'New scene', actionCount: '{count} action(s)',
@@ -674,7 +674,7 @@ const I18N = {
         boardConnectionLabel: 'Platinenverbindung', onlineState: 'Online', unconfirmedState: 'Unbestätigt',
         notConfiguredFem: 'Nicht konfiguriert', latencyWord: 'Latenz', nopalHandshake: 'NOPAL-Handshake',
         heapAvailable: 'Verfügbarer Heap', noIpWord: 'Keine IP', uptimeWord: 'Laufzeit', sinceLastRestart: 'Seit dem letzten Neustart',
-        inputAnalog: 'Analogeingang', wifiSignal: 'WLAN-Signal', localNetwork: 'Lokales Netzwerk',
+        inputAnalog: 'Analogeingang', wifiSignal: 'WLAN-Signal', localNetwork: 'Lokales Netzwerk', dhtSensorLabel: 'DHT11-Sensor',
         boardTelemetry: 'Platinen-Telemetrie', lastRealHandshakeData: 'Daten des letzten echten Handshakes',
         subScenes2: 'Szenen', createSceneHint: 'Erstelle eine Szene, um Relais einzuschalten und Lichter mit einer einzigen Aktion anzupassen.',
         newSceneWord: 'Neue Szene', actionCount: '{count} Aktion(en)',
@@ -926,7 +926,7 @@ const I18N = {
         boardConnectionLabel: 'Connexion de la carte', onlineState: 'En ligne', unconfirmedState: 'Non confirmée',
         notConfiguredFem: 'Non configurée', latencyWord: 'Latence', nopalHandshake: 'Handshake NOPAL',
         heapAvailable: 'Heap disponible', noIpWord: 'Pas d\'IP', uptimeWord: 'Disponibilité', sinceLastRestart: 'Depuis le dernier redémarrage',
-        inputAnalog: 'Entrée analogique', wifiSignal: 'Signal WiFi', localNetwork: 'Réseau local',
+        inputAnalog: 'Entrée analogique', wifiSignal: 'Signal WiFi', localNetwork: 'Réseau local', dhtSensorLabel: 'Capteur DHT11',
         boardTelemetry: 'Télémétrie de la carte', lastRealHandshakeData: 'Données du dernier handshake réel',
         subScenes2: 'Scènes', createSceneHint: 'Créez une scène pour allumer des relais et ajuster les lumières en une seule action.',
         newSceneWord: 'Nouvelle scène', actionCount: '{count} action(s)',
@@ -1178,7 +1178,7 @@ const I18N = {
         boardConnectionLabel: 'Conexão da placa', onlineState: 'Online', unconfirmedState: 'Não confirmada',
         notConfiguredFem: 'Não configurada', latencyWord: 'Latência', nopalHandshake: 'Handshake NOPAL',
         heapAvailable: 'Heap disponível', noIpWord: 'Sem IP', uptimeWord: 'Uptime', sinceLastRestart: 'Desde a última reinicialização',
-        inputAnalog: 'Entrada analógica', wifiSignal: 'Sinal WiFi', localNetwork: 'Rede local',
+        inputAnalog: 'Entrada analógica', wifiSignal: 'Sinal WiFi', localNetwork: 'Rede local', dhtSensorLabel: 'Sensor DHT11',
         boardTelemetry: 'Telemetria da placa', lastRealHandshakeData: 'Dados do último handshake real',
         subScenes2: 'Cenas', createSceneHint: 'Crie uma cena para ligar relés e ajustar luzes com uma única ação.',
         newSceneWord: 'Nova cena', actionCount: '{count} ação(ões)',
@@ -3127,6 +3127,17 @@ const I18N = {
             [tr('inputAnalog'), info.a0_raw != null ? `${info.a0_raw} RAW` : tr('notReported'), info.a0_percent != null ? `${info.a0_percent}% · GPIO ${info.adc_gpio || '—'}` : 'ADC'],
             [tr('wifiSignal'), info.rssi ? `${info.rssi} dBm` : tr('notReported'), info.ssid || info.wifi_mode || tr('localNetwork')],
         ];
+        // Solo si el firmware de esta placa reporta el bloque "dht" (ver
+        // probe_wifi_board() en accessory_service.py) -- una placa vieja o
+        // sin el sensor cableado simplemente no agrega esta fila, en vez
+        // de mostrar un dato inventado.
+        if (info.dht_enabled) {
+            metrics.push([
+                tr('dhtSensorLabel'),
+                info.dht_valid ? `${Number(info.dht_temp_c).toFixed(1)}°C / ${Number(info.dht_humidity_pct).toFixed(1)}%` : tr('notReported'),
+                `GPIO ${info.dht_pin}`,
+            ]);
+        }
         return `<section class="wsa-card"><div class="wsa-card-title-row"><h2>${icon(ICON_ACTIVITY, 16)}${tr('boardTelemetry')}</h2><small class="wsa-text-muted">${tr('lastRealHandshakeData')}</small></div>
             <div class="wsa-workshop-sensors">${metrics.map(([label, value, note]) => `<div><span>${esc(label)}</span><strong>${esc(value)}</strong><small>${esc(note)}</small></div>`).join('')}</div></section>`;
     }

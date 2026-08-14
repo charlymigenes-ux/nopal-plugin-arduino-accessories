@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "arduino-accessories",
   "name": "Automatización de Taller",
-  "version": "2.5.0",
+  "version": "2.5.1",
   "publisher": "NOPAL Labs",
   "category": "Accesorios",
   "description": "Control unificado del taller para placas Arduino/ESP32: relés, iluminación, telemetría, escenas, mapas de pines y automatizaciones por máquina.",

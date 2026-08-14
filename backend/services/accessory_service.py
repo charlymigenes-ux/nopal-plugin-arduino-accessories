@@ -299,6 +299,7 @@ def probe_wifi_board(ip: str, username: str, password: str) -> Optional[Dict[str
     led = data.get("led", {})
     inputs = data.get("inputs", {})
     relays = data.get("relays", [])
+    dht = data.get("dht", {})
     result = {
         "ip": ip,
         "firmware": data.get("firmware", ""),
@@ -325,6 +326,18 @@ def probe_wifi_board(ip: str, username: str, password: str) -> Optional[Dict[str
         "led_effect": led.get("effect"),
         "led_brightness": led.get("brightness"),
         "led_gpio": led.get("gpio"),
+        # Firmware sin sensor DHT11 (ESP8266, u otro firmware NOPAL sin
+        # este campo) ni siquiera manda "dht" -- dht.get(...) da None acá
+        # y el filtro de abajo lo descarta, en vez de mostrar un dato
+        # inventado. "dht_enabled" en False (ESP32 sin el sensor
+        # habilitado) SÍ se conserva -- no es None -- para que el frontend
+        # sepa que el firmware entiende de DHT11 aunque esta placa puntual
+        # no lo tenga cableado.
+        "dht_enabled": dht.get("enabled"),
+        "dht_valid": dht.get("valid"),
+        "dht_temp_c": dht.get("t_c"),
+        "dht_humidity_pct": dht.get("h_pct"),
+        "dht_pin": dht.get("pin"),
     }
     result.update({key: value for key, value in optional.items() if value is not None})
     return result

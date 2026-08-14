@@ -3646,6 +3646,13 @@ const I18N = {
         root = null;
     }
 
+    // NOPAL core dispara este evento al cambiar de idioma (ver setLanguage()
+    // en translations.js) -- sin esto, la ficha ya montada se quedaba en el
+    // idioma con el que abrió hasta que el usuario navegaba a otra sección
+    // y volvía (issue #50). render() ya revisa `root` antes de pintar, así
+    // que es seguro llamarlo aunque el plugin no esté montado.
+    window.addEventListener('nopal:language-changed', () => { if (root) render(); });
+
     window.NopalPluginRegistry = window.NopalPluginRegistry || {};
     window.NopalPluginRegistry[PLUGIN_ID] = { mount, unmount, version: PLUGIN_VERSION };
     mount();

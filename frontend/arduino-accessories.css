@@ -724,6 +724,14 @@
     font-size: .8rem;
 }
 .wsa-manageboard-fields input:focus { border-color: var(--wsa-accent); outline: none; }
+.wsa-manageboard-fields .wsa-manageboard-ambient {
+    grid-column: 1 / -1;
+    flex-direction: row;
+    align-items: center;
+    gap: 7px;
+    cursor: pointer;
+}
+.wsa-manageboard-ambient input { width: auto; accent-color: var(--wsa-accent); cursor: pointer; }
 .wsa-manageboard-actions { display: flex; gap: 6px; flex-shrink: 0; }
 
 /* ── Asistente de firmware -- habla con el backend real, ver comentario en el JS ── */

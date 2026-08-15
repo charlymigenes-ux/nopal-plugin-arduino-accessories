@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
+from . import board_pinmap_service
 from .activity_log import log_event
 
 logger = logging.getLogger(__name__)
@@ -299,6 +300,7 @@ def probe_wifi_board(ip: str, username: str, password: str) -> Optional[Dict[str
     led = data.get("led", {})
     inputs = data.get("inputs", {})
     relays = data.get("relays", [])
+    dht = data.get("dht", {})
     result = {
         "ip": ip,
         "firmware": data.get("firmware", ""),
@@ -325,6 +327,18 @@ def probe_wifi_board(ip: str, username: str, password: str) -> Optional[Dict[str
         "led_effect": led.get("effect"),
         "led_brightness": led.get("brightness"),
         "led_gpio": led.get("gpio"),
+        # Firmware sin sensor DHT11 (ESP8266, u otro firmware NOPAL sin
+        # este campo) ni siquiera manda "dht" -- dht.get(...) da None acá
+        # y el filtro de abajo lo descarta, en vez de mostrar un dato
+        # inventado. "dht_enabled" en False (ESP32 sin el sensor
+        # habilitado) SÍ se conserva -- no es None -- para que el frontend
+        # sepa que el firmware entiende de DHT11 aunque esta placa puntual
+        # no lo tenga cableado.
+        "dht_enabled": dht.get("enabled"),
+        "dht_valid": dht.get("valid"),
+        "dht_temp_c": dht.get("t_c"),
+        "dht_humidity_pct": dht.get("h_pct"),
+        "dht_pin": dht.get("pin"),
     }
     result.update({key: value for key, value in optional.items() if value is not None})
     return result
@@ -666,6 +680,29 @@ async def get_configured_boards_telemetry(boards: List[Dict[str, Any]]) -> List[
     loop = asyncio.get_event_loop()
     tasks = [loop.run_in_executor(None, _probe_configured_board_sync, board) for board in boards]
     return await asyncio.gather(*tasks) if tasks else []
+
+
+async def get_ambient_temperature_c() -> Optional[float]:
+    """Temperatura ambiente del taller, tomada del DHT11 de la placa que el
+    usuario eligió como sensor ambiente (ver
+    board_pinmap_service.set_ambient_sensor_board) -- llamada por
+    dashboard_service.py del core, que la deja en None si no hay ninguna
+    placa elegida, si no responde, o si su lectura de DHT11 todavía no es
+    válida. Nunca inventa un dato: sin selección real, no hay ficha."""
+    board_id = board_pinmap_service.get_ambient_sensor_board_id()
+    if board_id is None:
+        return None
+
+    board = next((b for b in board_pinmap_service.list_boards() if b.get("id") == board_id), None)
+    if board is None:
+        return None
+
+    loop = asyncio.get_event_loop()
+    probed = await loop.run_in_executor(None, _probe_configured_board_sync, board)
+    telemetry = probed.get("telemetry") or {}
+    if not telemetry.get("dht_valid"):
+        return None
+    return telemetry.get("dht_temp_c")
 
 
 # ── Registro de accesorios (persistido) ──

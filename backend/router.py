@@ -101,6 +101,28 @@ async def arduino_boards_telemetry_endpoint(user: dict = Depends(require_auth)):
     return {"boards": await get_configured_boards_telemetry(boards)}
 
 
+@router.get("/api/accessories/arduino/ambient-sensor")
+async def arduino_ambient_sensor_get_endpoint(user: dict = Depends(require_auth)):
+    """Qué placa (si hay alguna) está marcada como sensor ambiente del
+    taller -- ver board_pinmap_service.get_ambient_sensor_board_id(). Lo
+    consulta tanto el frontend de este plugin (para marcar el toggle
+    correcto) como dashboard_service.py del core, por get_loaded_plugin_module."""
+    return {"board_id": board_pinmap_service.get_ambient_sensor_board_id()}
+
+
+@router.post("/api/accessories/arduino/ambient-sensor")
+async def arduino_ambient_sensor_set_endpoint(
+    board_id: str = Form(""),
+    user: dict = Depends(require_role("admin")),
+):
+    """`board_id` vacío quita la selección (ninguna placa es el sensor
+    ambiente). Devuelve 404 si se pidió una placa que no existe, en vez de
+    guardar una selección que después nunca va a responder."""
+    if not board_pinmap_service.set_ambient_sensor_board(board_id or None):
+        raise HTTPException(status_code=404, detail="No se encontró esa placa")
+    return {"board_id": board_pinmap_service.get_ambient_sensor_board_id()}
+
+
 @router.post("/api/accessories/arduino/boards")
 async def arduino_boards_add_endpoint(
     catalog_id: str = Form(...),

@@ -59,6 +59,45 @@ class TestArduinoBoardsAdd:
         assert response.json()["device"] is None
 
 
+class TestArduinoAmbientSensor:
+    def test_none_by_default(self, client, as_admin):
+        response = client.get("/api/accessories/arduino/ambient-sensor")
+        assert response.status_code == 200
+        assert response.json() == {"board_id": None}
+
+    def test_set_and_get(self, client, as_admin):
+        board = _add_board(client, as_admin)
+        response = client.post("/api/accessories/arduino/ambient-sensor", data={"board_id": board["id"]})
+        assert response.status_code == 200
+        assert response.json() == {"board_id": board["id"]}
+        assert client.get("/api/accessories/arduino/ambient-sensor").json() == {"board_id": board["id"]}
+
+    def test_choosing_a_new_board_unmarks_the_previous_one(self, client, as_admin):
+        first = _add_board(client, as_admin, name="Placa 1")
+        second = _add_board(client, as_admin, name="Placa 2")
+        client.post("/api/accessories/arduino/ambient-sensor", data={"board_id": first["id"]})
+        client.post("/api/accessories/arduino/ambient-sensor", data={"board_id": second["id"]})
+        assert client.get("/api/accessories/arduino/ambient-sensor").json() == {"board_id": second["id"]}
+
+    def test_unknown_board_returns_404(self, client, as_admin):
+        response = client.post("/api/accessories/arduino/ambient-sensor", data={"board_id": "no-existe"})
+        assert response.status_code == 404
+
+    def test_empty_board_id_clears_the_selection(self, client, as_admin):
+        board = _add_board(client, as_admin)
+        client.post("/api/accessories/arduino/ambient-sensor", data={"board_id": board["id"]})
+        response = client.post("/api/accessories/arduino/ambient-sensor", data={"board_id": ""})
+        assert response.json() == {"board_id": None}
+
+    def test_requires_admin_to_set(self, client, as_operator):
+        response = client.post("/api/accessories/arduino/ambient-sensor", data={"board_id": "x"})
+        assert response.status_code == 403
+
+    def test_requires_auth_to_read(self, client):
+        response = client.get("/api/accessories/arduino/ambient-sensor")
+        assert response.status_code == 401
+
+
 class TestArduinoBoardsUpdatePin:
     def test_update_pin_success(self, client, as_admin):
         board = _add_board(client, as_admin)

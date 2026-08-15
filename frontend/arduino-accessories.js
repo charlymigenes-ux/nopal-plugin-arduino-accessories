@@ -1,6 +1,6 @@
 (() => {
     const PLUGIN_ID = 'arduino-accessories';
-    const PLUGIN_VERSION = '2.5.0';
+    const PLUGIN_VERSION = '2.5.2';
     if (window.NopalPluginRegistry?.[PLUGIN_ID]) return;
 
     // Mismo patrón que font-library.js/svg-toolkit.js/spoolman.js/matriz-led.js:
@@ -170,7 +170,7 @@ const I18N = {
         boardConnectionLabel: 'Conexión de placa', onlineState: 'En línea', unconfirmedState: 'Sin confirmar',
         notConfiguredFem: 'No configurada', latencyWord: 'Latencia', nopalHandshake: 'Handshake NOPAL',
         heapAvailable: 'Heap disponible', noIpWord: 'Sin IP', uptimeWord: 'Uptime', sinceLastRestart: 'Desde el último reinicio',
-        inputAnalog: 'Entrada analógica', wifiSignal: 'Señal WiFi', localNetwork: 'Red local',
+        inputAnalog: 'Entrada analógica', wifiSignal: 'Señal WiFi', localNetwork: 'Red local', dhtSensorLabel: 'Sensor DHT11',
         boardTelemetry: 'Telemetría de la placa', lastRealHandshakeData: 'Datos del último handshake real',
         subScenes2: 'Escenas', createSceneHint: 'Crea una escena para encender relés y ajustar luces con una sola acción.',
         newSceneWord: 'Nueva escena', actionCount: '{count} acción(es)',
@@ -213,6 +213,7 @@ const I18N = {
         chooseModel: 'Elige un modelo.', giveBoardName: 'Ponle un nombre a la placa.',
         boardAdded: '{name} ({label}) se agregó.', errCouldNotAddBoard: 'No se pudo agregar la placa.',
         boardUpdated: 'Placa actualizada.', errCouldNotUpdateBoard: 'No se pudo actualizar la placa.',
+        ambientSensorLabel: 'Sensor ambiente del taller', ambientSensorHint: 'Usa el DHT11 de esta placa para la ficha "Temp. ambiente del taller" del panel principal. Solo una placa a la vez.',
         boardDeleted: 'Placa eliminada.', errCouldNotDeleteBoard: 'No se pudo eliminar la placa.',
         errCouldNotLoadSavedBoards: 'No se pudieron cargar las placas guardadas.',
         configApplied: 'Configuración aplicada.', errCouldNotSavePinConfig: 'No se pudo guardar la configuración del pin.',
@@ -422,7 +423,7 @@ const I18N = {
         boardConnectionLabel: 'Board connection', onlineState: 'Online', unconfirmedState: 'Unconfirmed',
         notConfiguredFem: 'Not configured', latencyWord: 'Latency', nopalHandshake: 'NOPAL handshake',
         heapAvailable: 'Available heap', noIpWord: 'No IP', uptimeWord: 'Uptime', sinceLastRestart: 'Since last restart',
-        inputAnalog: 'Analog input', wifiSignal: 'WiFi signal', localNetwork: 'Local network',
+        inputAnalog: 'Analog input', wifiSignal: 'WiFi signal', localNetwork: 'Local network', dhtSensorLabel: 'DHT11 sensor',
         boardTelemetry: 'Board telemetry', lastRealHandshakeData: 'Data from the last real handshake',
         subScenes2: 'Scenes', createSceneHint: 'Create a scene to turn on relays and adjust lights with a single action.',
         newSceneWord: 'New scene', actionCount: '{count} action(s)',
@@ -465,6 +466,7 @@ const I18N = {
         chooseModel: 'Choose a model.', giveBoardName: 'Give the board a name.',
         boardAdded: '{name} ({label}) was added.', errCouldNotAddBoard: 'Could not add the board.',
         boardUpdated: 'Board updated.', errCouldNotUpdateBoard: 'Could not update the board.',
+        ambientSensorLabel: 'Workshop ambient sensor', ambientSensorHint: 'Use this board\'s DHT11 for the "Workshop ambient temp." card on the main dashboard. Only one board at a time.',
         boardDeleted: 'Board deleted.', errCouldNotDeleteBoard: 'Could not delete the board.',
         errCouldNotLoadSavedBoards: 'Could not load saved boards.',
         configApplied: 'Configuration applied.', errCouldNotSavePinConfig: 'Could not save the pin configuration.',
@@ -674,7 +676,7 @@ const I18N = {
         boardConnectionLabel: 'Platinenverbindung', onlineState: 'Online', unconfirmedState: 'Unbestätigt',
         notConfiguredFem: 'Nicht konfiguriert', latencyWord: 'Latenz', nopalHandshake: 'NOPAL-Handshake',
         heapAvailable: 'Verfügbarer Heap', noIpWord: 'Keine IP', uptimeWord: 'Laufzeit', sinceLastRestart: 'Seit dem letzten Neustart',
-        inputAnalog: 'Analogeingang', wifiSignal: 'WLAN-Signal', localNetwork: 'Lokales Netzwerk',
+        inputAnalog: 'Analogeingang', wifiSignal: 'WLAN-Signal', localNetwork: 'Lokales Netzwerk', dhtSensorLabel: 'DHT11-Sensor',
         boardTelemetry: 'Platinen-Telemetrie', lastRealHandshakeData: 'Daten des letzten echten Handshakes',
         subScenes2: 'Szenen', createSceneHint: 'Erstelle eine Szene, um Relais einzuschalten und Lichter mit einer einzigen Aktion anzupassen.',
         newSceneWord: 'Neue Szene', actionCount: '{count} Aktion(en)',
@@ -717,6 +719,7 @@ const I18N = {
         chooseModel: 'Wähle ein Modell.', giveBoardName: 'Gib der Platine einen Namen.',
         boardAdded: '{name} ({label}) wurde hinzugefügt.', errCouldNotAddBoard: 'Die Platine konnte nicht hinzugefügt werden.',
         boardUpdated: 'Platine aktualisiert.', errCouldNotUpdateBoard: 'Die Platine konnte nicht aktualisiert werden.',
+        ambientSensorLabel: 'Umgebungssensor der Werkstatt', ambientSensorHint: 'Verwendet den DHT11 dieser Platine für die Karte „Umgebungstemp. der Werkstatt" im Hauptpanel. Nur eine Platine gleichzeitig.',
         boardDeleted: 'Platine gelöscht.', errCouldNotDeleteBoard: 'Die Platine konnte nicht gelöscht werden.',
         errCouldNotLoadSavedBoards: 'Gespeicherte Platinen konnten nicht geladen werden.',
         configApplied: 'Konfiguration angewendet.', errCouldNotSavePinConfig: 'Die Pin-Konfiguration konnte nicht gespeichert werden.',
@@ -926,7 +929,7 @@ const I18N = {
         boardConnectionLabel: 'Connexion de la carte', onlineState: 'En ligne', unconfirmedState: 'Non confirmée',
         notConfiguredFem: 'Non configurée', latencyWord: 'Latence', nopalHandshake: 'Handshake NOPAL',
         heapAvailable: 'Heap disponible', noIpWord: 'Pas d\'IP', uptimeWord: 'Disponibilité', sinceLastRestart: 'Depuis le dernier redémarrage',
-        inputAnalog: 'Entrée analogique', wifiSignal: 'Signal WiFi', localNetwork: 'Réseau local',
+        inputAnalog: 'Entrée analogique', wifiSignal: 'Signal WiFi', localNetwork: 'Réseau local', dhtSensorLabel: 'Capteur DHT11',
         boardTelemetry: 'Télémétrie de la carte', lastRealHandshakeData: 'Données du dernier handshake réel',
         subScenes2: 'Scènes', createSceneHint: 'Créez une scène pour allumer des relais et ajuster les lumières en une seule action.',
         newSceneWord: 'Nouvelle scène', actionCount: '{count} action(s)',
@@ -969,6 +972,7 @@ const I18N = {
         chooseModel: 'Choisissez un modèle.', giveBoardName: 'Donnez un nom à la carte.',
         boardAdded: '{name} ({label}) a été ajoutée.', errCouldNotAddBoard: 'Impossible d\'ajouter la carte.',
         boardUpdated: 'Carte mise à jour.', errCouldNotUpdateBoard: 'Impossible de mettre à jour la carte.',
+        ambientSensorLabel: 'Capteur ambiant de l\'atelier', ambientSensorHint: 'Utilise le DHT11 de cette carte pour la fiche « Temp. ambiante de l\'atelier » du tableau de bord principal. Une seule carte à la fois.',
         boardDeleted: 'Carte supprimée.', errCouldNotDeleteBoard: 'Impossible de supprimer la carte.',
         errCouldNotLoadSavedBoards: 'Impossible de charger les cartes enregistrées.',
         configApplied: 'Configuration appliquée.', errCouldNotSavePinConfig: 'Impossible d\'enregistrer la configuration de la broche.',
@@ -1178,7 +1182,7 @@ const I18N = {
         boardConnectionLabel: 'Conexão da placa', onlineState: 'Online', unconfirmedState: 'Não confirmada',
         notConfiguredFem: 'Não configurada', latencyWord: 'Latência', nopalHandshake: 'Handshake NOPAL',
         heapAvailable: 'Heap disponível', noIpWord: 'Sem IP', uptimeWord: 'Uptime', sinceLastRestart: 'Desde a última reinicialização',
-        inputAnalog: 'Entrada analógica', wifiSignal: 'Sinal WiFi', localNetwork: 'Rede local',
+        inputAnalog: 'Entrada analógica', wifiSignal: 'Sinal WiFi', localNetwork: 'Rede local', dhtSensorLabel: 'Sensor DHT11',
         boardTelemetry: 'Telemetria da placa', lastRealHandshakeData: 'Dados do último handshake real',
         subScenes2: 'Cenas', createSceneHint: 'Crie uma cena para ligar relés e ajustar luzes com uma única ação.',
         newSceneWord: 'Nova cena', actionCount: '{count} ação(ões)',
@@ -1221,6 +1225,7 @@ const I18N = {
         chooseModel: 'Escolha um modelo.', giveBoardName: 'Dê um nome à placa.',
         boardAdded: '{name} ({label}) foi adicionada.', errCouldNotAddBoard: 'Não foi possível adicionar a placa.',
         boardUpdated: 'Placa atualizada.', errCouldNotUpdateBoard: 'Não foi possível atualizar a placa.',
+        ambientSensorLabel: 'Sensor ambiente da oficina', ambientSensorHint: 'Usa o DHT11 desta placa para o cartão "Temp. ambiente da oficina" do painel principal. Apenas uma placa por vez.',
         boardDeleted: 'Placa excluída.', errCouldNotDeleteBoard: 'Não foi possível excluir a placa.',
         errCouldNotLoadSavedBoards: 'Não foi possível carregar as placas salvas.',
         configApplied: 'Configuração aplicada.', errCouldNotSavePinConfig: 'Não foi possível salvar a configuração do pino.',
@@ -1601,6 +1606,7 @@ const I18N = {
         scenes: [],
         activity: [],
         boardTelemetry: [],
+        ambientSensorBoardId: null,
         workshopLoading: true,
         // connected: true cuando la placa se confirmó de verdad por USB (ver
         // asistente de firmware) -- una placa "connected" muestra solo sus
@@ -1680,16 +1686,18 @@ const I18N = {
     async function loadWorkshopData({ quiet = false } = {}) {
         if (!quiet) state.workshopLoading = true;
         try {
-            const [accessoriesData, scenesData, activityData, telemetryData] = await Promise.all([
+            const [accessoriesData, scenesData, activityData, telemetryData, ambientSensorData] = await Promise.all([
                 api('/api/accessories/status'),
                 api('/api/accessories/scenes'),
                 api('/api/accessories/activity'),
                 api('/api/accessories/arduino/telemetry'),
+                api('/api/accessories/arduino/ambient-sensor'),
             ]);
             state.accessories = accessoriesData.accessories || [];
             state.scenes = scenesData.scenes || [];
             state.activity = activityData.activity || [];
             state.boardTelemetry = telemetryData.boards || [];
+            state.ambientSensorBoardId = ambientSensorData.board_id || null;
             reconcileBoardConnections();
         } catch (error) {
             if (!quiet) toast(error.message || tr('errCouldNotLoadWorkshopState'), 'error');
@@ -2197,6 +2205,10 @@ const I18N = {
                     <label><span>${tr('nameWord')}</span><input type="text" data-wsa-manageboard-field="name" value="${esc(board.name)}" maxlength="40"></label>
                     <label><span>${tr('wizardTilePort')} USB</span><input type="text" data-wsa-manageboard-field="device" value="${esc(board.device || '')}" placeholder="/dev/ttyUSB0"></label>
                     <label><span>IP</span><input type="text" data-wsa-manageboard-field="ip" value="${esc(board.ip || '')}" placeholder="192.168.0.83"></label>
+                    <label class="wsa-manageboard-ambient" title="${tr('ambientSensorHint')}">
+                        <input type="checkbox" data-wsa-manageboard-ambient="${board.id}" ${state.ambientSensorBoardId === board.id ? 'checked' : ''}>
+                        <span>${tr('ambientSensorLabel')}</span>
+                    </label>
                 </div>
                 <div class="wsa-manageboard-actions">
                     <button type="button" class="wsa-btn-icon" data-wsa-manageboard-save="${board.id}" title="${tr('saveBtn')}">${icon(ICON_CHECK, 14)}</button>
@@ -2232,6 +2244,26 @@ const I18N = {
             render();
         } catch (e) {
             toast(e.message || tr('errCouldNotUpdateBoard'), 'error');
+        }
+    }
+
+    // Solo una placa a la vez puede ser el sensor ambiente del taller --
+    // el backend ya hace cumplir esto (set_ambient_sensor_board desmarca
+    // cualquier otra), acá solo hay que reflejarlo en los demás checkboxes
+    // sin esperar un refresco completo del panel.
+    async function setAmbientSensorBoard(boardId, checked) {
+        try {
+            const result = await api('/api/accessories/arduino/ambient-sensor', {
+                method: 'POST',
+                body: new URLSearchParams({ board_id: checked ? boardId : '' }),
+            });
+            state.ambientSensorBoardId = result.board_id || null;
+            root.querySelectorAll('[data-wsa-manageboard-ambient]').forEach(input => {
+                input.checked = input.dataset.wsaManageboardAmbient === state.ambientSensorBoardId;
+            });
+        } catch (e) {
+            toast(e.message || tr('errCouldNotUpdateBoard'), 'error');
+            openManageBoardsPanel();
         }
     }
 
@@ -3127,6 +3159,17 @@ const I18N = {
             [tr('inputAnalog'), info.a0_raw != null ? `${info.a0_raw} RAW` : tr('notReported'), info.a0_percent != null ? `${info.a0_percent}% · GPIO ${info.adc_gpio || '—'}` : 'ADC'],
             [tr('wifiSignal'), info.rssi ? `${info.rssi} dBm` : tr('notReported'), info.ssid || info.wifi_mode || tr('localNetwork')],
         ];
+        // Solo si el firmware de esta placa reporta el bloque "dht" (ver
+        // probe_wifi_board() en accessory_service.py) -- una placa vieja o
+        // sin el sensor cableado simplemente no agrega esta fila, en vez
+        // de mostrar un dato inventado.
+        if (info.dht_enabled) {
+            metrics.push([
+                tr('dhtSensorLabel'),
+                info.dht_valid ? `${Number(info.dht_temp_c).toFixed(1)}°C / ${Number(info.dht_humidity_pct).toFixed(1)}%` : tr('notReported'),
+                `GPIO ${info.dht_pin}`,
+            ]);
+        }
         return `<section class="wsa-card"><div class="wsa-card-title-row"><h2>${icon(ICON_ACTIVITY, 16)}${tr('boardTelemetry')}</h2><small class="wsa-text-muted">${tr('lastRealHandshakeData')}</small></div>
             <div class="wsa-workshop-sensors">${metrics.map(([label, value, note]) => `<div><span>${esc(label)}</span><strong>${esc(value)}</strong><small>${esc(note)}</small></div>`).join('')}</div></section>`;
     }
@@ -3476,6 +3519,10 @@ const I18N = {
             if (saveBtn) { saveManageBoardInfo(saveBtn.dataset.wsaManageboardSave); return; }
             const deleteBtn = event.target.closest('[data-wsa-manageboard-delete]');
             if (deleteBtn) { deleteManageBoard(deleteBtn.dataset.wsaManageboardDelete); return; }
+        });
+        root.querySelector('#wsa-manageboards-list').addEventListener('change', event => {
+            const ambientCheckbox = event.target.closest('[data-wsa-manageboard-ambient]');
+            if (ambientCheckbox) setAmbientSensorBoard(ambientCheckbox.dataset.wsaManageboardAmbient, ambientCheckbox.checked);
         });
 
         root.querySelector('#wsa-content').addEventListener('click', event => {

@@ -34,8 +34,8 @@ def test_workshop_overview_exposes_approved_sections_and_actions():
 def test_plugin_version_matches_frontend_registry():
     manifest = (PLUGIN_ROOT / "nopal-plugin.json").read_text(encoding="utf-8")
     javascript = (PLUGIN_ROOT / "frontend" / "arduino-accessories.js").read_text(encoding="utf-8")
-    assert '"version": "2.5.1"' in manifest
-    assert "PLUGIN_VERSION = '2.5.1'" in javascript
+    assert '"version": "2.5.2"' in manifest
+    assert "PLUGIN_VERSION = '2.5.2'" in javascript
 
 
 def test_add_board_uses_one_connection_wizard_and_detected_pin_profile():

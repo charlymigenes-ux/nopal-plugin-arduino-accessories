@@ -107,6 +107,30 @@ def update_board_info(
     return board
 
 
+def get_ambient_sensor_board_id() -> Optional[str]:
+    """Placa que el usuario eligió como "sensor ambiente del taller" (ver
+    set_ambient_sensor_board) -- None si no eligió ninguna. Se guarda en la
+    propia placa (campo "ambient_sensor") en vez de en un archivo aparte,
+    para no sumar un tercer registro además de arduino_boards_config.json
+    y accessory_registry.json."""
+    board = next((b for b in _load_boards() if b.get("ambient_sensor")), None)
+    return board.get("id") if board else None
+
+
+def set_ambient_sensor_board(board_id: Optional[str]) -> bool:
+    """Marca `board_id` como el sensor ambiente del taller (a lo sumo una
+    placa a la vez -- elegir una nueva desmarca la anterior). board_id=None
+    quita la selección. Devuelve False si se pidió una placa que no existe
+    -- no se inventa una selección."""
+    boards = _load_boards()
+    if board_id is not None and not any(b.get("id") == board_id for b in boards):
+        return False
+    for board in boards:
+        board["ambient_sensor"] = board.get("id") == board_id
+    _save_boards(boards)
+    return True
+
+
 def remove_board(board_id: str) -> bool:
     boards = _load_boards()
     remaining = [b for b in boards if b.get("id") != board_id]

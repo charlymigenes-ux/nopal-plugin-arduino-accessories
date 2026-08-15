@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
+from . import board_pinmap_service
 from .activity_log import log_event
 
 logger = logging.getLogger(__name__)
@@ -679,6 +680,29 @@ async def get_configured_boards_telemetry(boards: List[Dict[str, Any]]) -> List[
     loop = asyncio.get_event_loop()
     tasks = [loop.run_in_executor(None, _probe_configured_board_sync, board) for board in boards]
     return await asyncio.gather(*tasks) if tasks else []
+
+
+async def get_ambient_temperature_c() -> Optional[float]:
+    """Temperatura ambiente del taller, tomada del DHT11 de la placa que el
+    usuario eligió como sensor ambiente (ver
+    board_pinmap_service.set_ambient_sensor_board) -- llamada por
+    dashboard_service.py del core, que la deja en None si no hay ninguna
+    placa elegida, si no responde, o si su lectura de DHT11 todavía no es
+    válida. Nunca inventa un dato: sin selección real, no hay ficha."""
+    board_id = board_pinmap_service.get_ambient_sensor_board_id()
+    if board_id is None:
+        return None
+
+    board = next((b for b in board_pinmap_service.list_boards() if b.get("id") == board_id), None)
+    if board is None:
+        return None
+
+    loop = asyncio.get_event_loop()
+    probed = await loop.run_in_executor(None, _probe_configured_board_sync, board)
+    telemetry = probed.get("telemetry") or {}
+    if not telemetry.get("dht_valid"):
+        return None
+    return telemetry.get("dht_temp_c")
 
 
 # ── Registro de accesorios (persistido) ──

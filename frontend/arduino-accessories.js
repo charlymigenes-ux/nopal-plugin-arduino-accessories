@@ -1,6 +1,6 @@
 (() => {
     const PLUGIN_ID = 'arduino-accessories';
-    const PLUGIN_VERSION = '2.5.1';
+    const PLUGIN_VERSION = '2.5.2';
     if (window.NopalPluginRegistry?.[PLUGIN_ID]) return;
 
     // Mismo patrón que font-library.js/svg-toolkit.js/spoolman.js/matriz-led.js:
@@ -213,6 +213,7 @@ const I18N = {
         chooseModel: 'Elige un modelo.', giveBoardName: 'Ponle un nombre a la placa.',
         boardAdded: '{name} ({label}) se agregó.', errCouldNotAddBoard: 'No se pudo agregar la placa.',
         boardUpdated: 'Placa actualizada.', errCouldNotUpdateBoard: 'No se pudo actualizar la placa.',
+        ambientSensorLabel: 'Sensor ambiente del taller', ambientSensorHint: 'Usa el DHT11 de esta placa para la ficha "Temp. ambiente del taller" del panel principal. Solo una placa a la vez.',
         boardDeleted: 'Placa eliminada.', errCouldNotDeleteBoard: 'No se pudo eliminar la placa.',
         errCouldNotLoadSavedBoards: 'No se pudieron cargar las placas guardadas.',
         configApplied: 'Configuración aplicada.', errCouldNotSavePinConfig: 'No se pudo guardar la configuración del pin.',
@@ -465,6 +466,7 @@ const I18N = {
         chooseModel: 'Choose a model.', giveBoardName: 'Give the board a name.',
         boardAdded: '{name} ({label}) was added.', errCouldNotAddBoard: 'Could not add the board.',
         boardUpdated: 'Board updated.', errCouldNotUpdateBoard: 'Could not update the board.',
+        ambientSensorLabel: 'Workshop ambient sensor', ambientSensorHint: 'Use this board\'s DHT11 for the "Workshop ambient temp." card on the main dashboard. Only one board at a time.',
         boardDeleted: 'Board deleted.', errCouldNotDeleteBoard: 'Could not delete the board.',
         errCouldNotLoadSavedBoards: 'Could not load saved boards.',
         configApplied: 'Configuration applied.', errCouldNotSavePinConfig: 'Could not save the pin configuration.',
@@ -717,6 +719,7 @@ const I18N = {
         chooseModel: 'Wähle ein Modell.', giveBoardName: 'Gib der Platine einen Namen.',
         boardAdded: '{name} ({label}) wurde hinzugefügt.', errCouldNotAddBoard: 'Die Platine konnte nicht hinzugefügt werden.',
         boardUpdated: 'Platine aktualisiert.', errCouldNotUpdateBoard: 'Die Platine konnte nicht aktualisiert werden.',
+        ambientSensorLabel: 'Umgebungssensor der Werkstatt', ambientSensorHint: 'Verwendet den DHT11 dieser Platine für die Karte „Umgebungstemp. der Werkstatt" im Hauptpanel. Nur eine Platine gleichzeitig.',
         boardDeleted: 'Platine gelöscht.', errCouldNotDeleteBoard: 'Die Platine konnte nicht gelöscht werden.',
         errCouldNotLoadSavedBoards: 'Gespeicherte Platinen konnten nicht geladen werden.',
         configApplied: 'Konfiguration angewendet.', errCouldNotSavePinConfig: 'Die Pin-Konfiguration konnte nicht gespeichert werden.',
@@ -969,6 +972,7 @@ const I18N = {
         chooseModel: 'Choisissez un modèle.', giveBoardName: 'Donnez un nom à la carte.',
         boardAdded: '{name} ({label}) a été ajoutée.', errCouldNotAddBoard: 'Impossible d\'ajouter la carte.',
         boardUpdated: 'Carte mise à jour.', errCouldNotUpdateBoard: 'Impossible de mettre à jour la carte.',
+        ambientSensorLabel: 'Capteur ambiant de l\'atelier', ambientSensorHint: 'Utilise le DHT11 de cette carte pour la fiche « Temp. ambiante de l\'atelier » du tableau de bord principal. Une seule carte à la fois.',
         boardDeleted: 'Carte supprimée.', errCouldNotDeleteBoard: 'Impossible de supprimer la carte.',
         errCouldNotLoadSavedBoards: 'Impossible de charger les cartes enregistrées.',
         configApplied: 'Configuration appliquée.', errCouldNotSavePinConfig: 'Impossible d\'enregistrer la configuration de la broche.',
@@ -1221,6 +1225,7 @@ const I18N = {
         chooseModel: 'Escolha um modelo.', giveBoardName: 'Dê um nome à placa.',
         boardAdded: '{name} ({label}) foi adicionada.', errCouldNotAddBoard: 'Não foi possível adicionar a placa.',
         boardUpdated: 'Placa atualizada.', errCouldNotUpdateBoard: 'Não foi possível atualizar a placa.',
+        ambientSensorLabel: 'Sensor ambiente da oficina', ambientSensorHint: 'Usa o DHT11 desta placa para o cartão "Temp. ambiente da oficina" do painel principal. Apenas uma placa por vez.',
         boardDeleted: 'Placa excluída.', errCouldNotDeleteBoard: 'Não foi possível excluir a placa.',
         errCouldNotLoadSavedBoards: 'Não foi possível carregar as placas salvas.',
         configApplied: 'Configuração aplicada.', errCouldNotSavePinConfig: 'Não foi possível salvar a configuração do pino.',
@@ -1601,6 +1606,7 @@ const I18N = {
         scenes: [],
         activity: [],
         boardTelemetry: [],
+        ambientSensorBoardId: null,
         workshopLoading: true,
         // connected: true cuando la placa se confirmó de verdad por USB (ver
         // asistente de firmware) -- una placa "connected" muestra solo sus
@@ -1680,16 +1686,18 @@ const I18N = {
     async function loadWorkshopData({ quiet = false } = {}) {
         if (!quiet) state.workshopLoading = true;
         try {
-            const [accessoriesData, scenesData, activityData, telemetryData] = await Promise.all([
+            const [accessoriesData, scenesData, activityData, telemetryData, ambientSensorData] = await Promise.all([
                 api('/api/accessories/status'),
                 api('/api/accessories/scenes'),
                 api('/api/accessories/activity'),
                 api('/api/accessories/arduino/telemetry'),
+                api('/api/accessories/arduino/ambient-sensor'),
             ]);
             state.accessories = accessoriesData.accessories || [];
             state.scenes = scenesData.scenes || [];
             state.activity = activityData.activity || [];
             state.boardTelemetry = telemetryData.boards || [];
+            state.ambientSensorBoardId = ambientSensorData.board_id || null;
             reconcileBoardConnections();
         } catch (error) {
             if (!quiet) toast(error.message || tr('errCouldNotLoadWorkshopState'), 'error');
@@ -2197,6 +2205,10 @@ const I18N = {
                     <label><span>${tr('nameWord')}</span><input type="text" data-wsa-manageboard-field="name" value="${esc(board.name)}" maxlength="40"></label>
                     <label><span>${tr('wizardTilePort')} USB</span><input type="text" data-wsa-manageboard-field="device" value="${esc(board.device || '')}" placeholder="/dev/ttyUSB0"></label>
                     <label><span>IP</span><input type="text" data-wsa-manageboard-field="ip" value="${esc(board.ip || '')}" placeholder="192.168.0.83"></label>
+                    <label class="wsa-manageboard-ambient" title="${tr('ambientSensorHint')}">
+                        <input type="checkbox" data-wsa-manageboard-ambient="${board.id}" ${state.ambientSensorBoardId === board.id ? 'checked' : ''}>
+                        <span>${tr('ambientSensorLabel')}</span>
+                    </label>
                 </div>
                 <div class="wsa-manageboard-actions">
                     <button type="button" class="wsa-btn-icon" data-wsa-manageboard-save="${board.id}" title="${tr('saveBtn')}">${icon(ICON_CHECK, 14)}</button>
@@ -2232,6 +2244,26 @@ const I18N = {
             render();
         } catch (e) {
             toast(e.message || tr('errCouldNotUpdateBoard'), 'error');
+        }
+    }
+
+    // Solo una placa a la vez puede ser el sensor ambiente del taller --
+    // el backend ya hace cumplir esto (set_ambient_sensor_board desmarca
+    // cualquier otra), acá solo hay que reflejarlo en los demás checkboxes
+    // sin esperar un refresco completo del panel.
+    async function setAmbientSensorBoard(boardId, checked) {
+        try {
+            const result = await api('/api/accessories/arduino/ambient-sensor', {
+                method: 'POST',
+                body: new URLSearchParams({ board_id: checked ? boardId : '' }),
+            });
+            state.ambientSensorBoardId = result.board_id || null;
+            root.querySelectorAll('[data-wsa-manageboard-ambient]').forEach(input => {
+                input.checked = input.dataset.wsaManageboardAmbient === state.ambientSensorBoardId;
+            });
+        } catch (e) {
+            toast(e.message || tr('errCouldNotUpdateBoard'), 'error');
+            openManageBoardsPanel();
         }
     }
 
@@ -3487,6 +3519,10 @@ const I18N = {
             if (saveBtn) { saveManageBoardInfo(saveBtn.dataset.wsaManageboardSave); return; }
             const deleteBtn = event.target.closest('[data-wsa-manageboard-delete]');
             if (deleteBtn) { deleteManageBoard(deleteBtn.dataset.wsaManageboardDelete); return; }
+        });
+        root.querySelector('#wsa-manageboards-list').addEventListener('change', event => {
+            const ambientCheckbox = event.target.closest('[data-wsa-manageboard-ambient]');
+            if (ambientCheckbox) setAmbientSensorBoard(ambientCheckbox.dataset.wsaManageboardAmbient, ambientCheckbox.checked);
         });
 
         root.querySelector('#wsa-content').addEventListener('click', event => {

@@ -52,8 +52,8 @@ class TestArduinoHttpRequest:
     def test_set_state_uses_http_when_transport_wifi(self, monkeypatch):
         calls = []
 
-        def fake_request(method, url, params=None, auth=None, timeout=None):
-            calls.append((method, url, params))
+        def fake_request(method, url, params=None, data=None, auth=None, timeout=None):
+            calls.append((method, url, params if params is not None else data))
             return _FakeResponse(text="OK")
 
         monkeypatch.setattr(accessory_service.requests, "request", fake_request)
@@ -66,7 +66,9 @@ class TestArduinoHttpRequest:
         calls = []
         monkeypatch.setattr(
             accessory_service.requests, "request",
-            lambda method, url, params=None, auth=None, timeout=None: calls.append(params) or _FakeResponse("OK"),
+            lambda method, url, params=None, data=None, auth=None, timeout=None: (
+                calls.append(params if params is not None else data) or _FakeResponse("OK")
+            ),
         )
         accessory_service._arduino_set_state(WIFI_CONFIG, False)
         assert calls[0]["on"] == "false"
@@ -74,8 +76,8 @@ class TestArduinoHttpRequest:
     def test_set_led_uses_http_when_transport_wifi(self, monkeypatch):
         calls = []
 
-        def fake_request(method, url, params=None, auth=None, timeout=None):
-            calls.append((method, url, params))
+        def fake_request(method, url, params=None, data=None, auth=None, timeout=None):
+            calls.append((method, url, params if params is not None else data))
             return _FakeResponse(text="OK")
 
         monkeypatch.setattr(accessory_service.requests, "request", fake_request)
@@ -93,8 +95,8 @@ class TestArduinoHttpRequest:
         del POST /api/led."""
         calls = []
 
-        def fake_request(method, url, params=None, auth=None, timeout=None):
-            calls.append((method, url, params))
+        def fake_request(method, url, params=None, data=None, auth=None, timeout=None):
+            calls.append((method, url, params if params is not None else data))
             return _FakeResponse(text="OK")
 
         monkeypatch.setattr(accessory_service.requests, "request", fake_request)

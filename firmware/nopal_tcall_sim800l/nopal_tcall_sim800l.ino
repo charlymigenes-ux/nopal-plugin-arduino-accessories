@@ -1,740 +1,129 @@
 /*
- * NOPAL — LilyGo T-Call SIM800L IP5306 v1.4 / 20200811
- * Firmware dedicado para la placa real, no para un ESP32 genérico.
+ * NOPAL — Firmware de accesorio AM-036 (T-Call SIM800L IP5306) + Wi-Fi + ElegantOTA
  *
- * PLACA Y PINES RESERVADOS:
- *   SIM800 UART RX ESP32 : GPIO26  (TX del SIM800)
- *   SIM800 UART TX ESP32 : GPIO27  (RX del SIM800)
- *   SIM800 PWRKEY        : GPIO4
- *   SIM800 RESET         : GPIO5
- *   SIM800 POWER ON      : GPIO23
- *   SIM800 DTR           : GPIO32
- *   SIM800 RI            : GPIO33
- *   IP5306 I2C SDA       : GPIO21
- *   IP5306 I2C SCL       : GPIO22
- *   LED azul integrado   : GPIO13, HIGH = encendido
+ * Basado en firmware/nopal_accessory/NOPAL_SIM800L_OTA.ino v1.3 de
+ * https://github.com/charlymigenes-ux/nopal, adaptado al mapa de pines real
+ * de esta placa (T-Call v1.3, SIM800L_IP5306_VERSION_20200811, ver
+ * utilities.h) y a sus accesorios físicos (2 relés + tira WS2812).
  *
- * ACCESORIOS SIN CONFLICTOS:
- *   RGB PWM              : GPIO14 / GPIO18 / GPIO19
- *   WS2812               : GPIO25
- *   4 relés              : MCP23017 por I2C, dirección 0x20, GPA0..GPA3
+ * Funciones:
+ *   - 2 relés
+ *   - Tira WS2812 / NeoPixel
+ *   - Wi-Fi STA con reconexión
+ *   - Punto de acceso de recuperación si falla el Wi-Fi
+ *   - ElegantOTA con autenticación
+ *   - mDNS: http://nopal-am036.local/
+ *   - SIM800L sobre UART2 del ESP32, en los pines reales del módem (26/27),
+ *     con encendido correcto vía MODEM_POWER_ON + boost IP5306 (setupPMU())
  *
- * IMPORTANTE:
- *   - GPIO16/17 no se usan porque la configuración de esta placa declara PSRAM.
- *   - Los relés no se conectan directamente al MCP23017: usa módulo de relés
- *     con entrada lógica o una etapa con transistor/optoacoplador.
- *   - Las tiras RGB analógicas requieren MOSFETs; ningún GPIO alimenta una tira.
- *   - SIM800L necesita una alimentación estable y se recomienda batería LiPo.
+ * Comunicación NOPAL:
+ *   Serial USB a 115200 baudios
+ *   Un comando por línea terminado en \n
  *
- * DEPENDENCIAS:
- *   - TinyGSM
- *   - ElegantOTA
- *   - Adafruit NeoPixel
- *
- * ARCHIVOS:
- *   - Este .ino
- *   - secrets.h (copia secrets.h.example y edítalo)
- *
- * COMANDOS USB, 115200 baudios, terminados en \n:
+ * Comandos:
  *   NOPAL:ID?
  *   NOPAL:NET?
- *   NOPAL:GSM?
- *   NOPAL:BAT?
- *   NOPAL:MODEM:RESTART
- *   NOPAL:SMS:+521234567890|Mensaje de prueba
- *   NOPAL:R1:ON
- *   NOPAL:R1:OFF
- *   NOPAL:R1?
- *   NOPAL:LED:255,80,0
+ *   NOPAL:R1:ON / R1:OFF / R1?
+ *   NOPAL:R2:ON / R2:OFF / R2?
  *   NOPAL:WS:0,255,0
- *   NOPAL:HELP?
+ *   NOPAL:SIM:AT
+ *   NOPAL:SIM:INFO?
+ *   NOPAL:SIM:CSQ?
+ *   NOPAL:SIM:CREG?
+ *   NOPAL:SIM:CCID?
+ *   NOPAL:SIM:IMEI?
+ *   NOPAL:SIM:OPERATOR?
+ *   NOPAL:SIM:RAW:AT+CPIN?
  *
- * LED AZUL INTEGRADO:
- *   - Encendido fijo: SIM800 registrado en la red GSM.
- *   - Parpadeo lento: buscando red / sin registro.
- *   - Parpadeo rápido: módem sin responder o reiniciándose.
+ * Portal web:
+ *   http://IP/
+ *   http://IP/api/status
+ *   http://IP/update
  */
 
+// Selección de variante de placa (ver utilities.h) — confirmada por el
+// usuario como T-Call v1.3 / IP5306.
+#define SIM800L_IP5306_VERSION_20200811
+
 #include <Arduino.h>
-#include <Wire.h>
-#include <WiFi.h>
-#include <WiFiClient.h>
-#include <WebServer.h>
-#include <ESPmDNS.h>
-#include <esp_arduino_version.h>
+#include "utilities.h"
+#include "secrets.h"
 
-#if __has_include("secrets.h")
-  #include "secrets.h"
+#if defined(ESP32)
+  #include <WiFi.h>
+  #include <WiFiClient.h>
+  #include <WebServer.h>
+  #include <ESPmDNS.h>
+  #include <esp_arduino_version.h>
 #else
-  #error "Falta secrets.h. Copia secrets.h.example como secrets.h y configura tus datos."
+  #error "Este firmware está adaptado específicamente a la placa T-Call ESP32 SIM800L (AM-036)."
 #endif
-
-#define TINY_GSM_MODEM_SIM800
-#define TINY_GSM_RX_BUFFER 1024
-#define TINY_GSM_DEBUG Serial
-#include <TinyGsmClient.h>
 
 #include <ElegantOTA.h>
-#include <Adafruit_NeoPixel.h>
+
 
 // ============================================================================
-// IDENTIDAD Y FUNCIONES
+// CONFIGURACIÓN GENERAL
 // ============================================================================
 
-#define FW_VERSION "2.0.0"
-#define BOARD_ID "lilygo-t-call-sim800l-ip5306-v1.4"
-#define DEVICE_ROLE "gsm-accessory"
+#define FW_VERSION "1.3-am036"
+// "role" tiene que ser el literal "accessory" a secas -- es lo que
+// accessory_service.py (probe_wifi_board/_probe_nopal_board_sync) exige
+// para reconocer una placa NOPAL, tanto por WiFi (GET /api/status) como
+// por USB (identificación por serial). Con "accessory-am036-sim800l" el
+// backend descartaba la placa en silencio: contestaba bien, autenticaba
+// bien, pero como el role no calzaba exacto se reportaba como "no
+// encontrada". La identidad específica de esta variante va en
+// DEVICE_BOARD, un campo aparte (mismo patrón que nopal_accessory.ino).
+#define DEVICE_ROLE "accessory"
+#define DEVICE_BOARD "am036_tcall_sim800l"
 
-#define ENABLE_GPRS true
-#define ENABLE_MCP23017_RELAYS true
-#define ENABLE_PWM_RGB true
-#define ENABLE_WS2812 true
+const bool RELAY_ACTIVE_LOW = true;
+
+const uint32_t WIFI_CONNECT_TIMEOUT_MS = 15000;
+const uint32_t WIFI_RECONNECT_INTERVAL_MS = 15000;
 
 const uint16_t HTTP_PORT = 80;
-const uint32_t WIFI_CONNECT_TIMEOUT_MS = 15000UL;
-const uint32_t WIFI_RECONNECT_INTERVAL_MS = 15000UL;
-const uint32_t MODEM_BOOT_DELAY_MS = 5500UL;
-const uint32_t MODEM_INIT_RETRY_MS = 15000UL;
-const uint32_t MODEM_POLL_INTERVAL_MS = 5000UL;
-const uint32_t MODEM_OPERATOR_REFRESH_MS = 60000UL;
-const uint32_t GPRS_RETRY_INTERVAL_MS = 60000UL;
-const uint32_t BATTERY_REFRESH_MS = 30000UL;
-const size_t SERIAL_LINE_MAX = 383;
+
 
 // ============================================================================
-// MAPA EXACTO DE LA T-CALL SIM800L IP5306 20200811
+// CONFIGURACIÓN DE PINES Y CAPACIDADES (AM-036 / T-Call v1.3 IP5306)
 // ============================================================================
 
-constexpr uint8_t MODEM_RX_PIN = 26;       // ESP32 RX <- SIM800 TX
-constexpr uint8_t MODEM_TX_PIN = 27;       // ESP32 TX -> SIM800 RX
-constexpr uint8_t MODEM_PWRKEY_PIN = 4;
-constexpr uint8_t MODEM_RST_PIN = 5;
-constexpr uint8_t MODEM_POWER_ON_PIN = 23;
-constexpr uint8_t MODEM_DTR_PIN = 32;
-constexpr uint8_t MODEM_RI_PIN = 33;
+#define RELAY_COUNT 2
 
-constexpr uint8_t I2C_SDA_PIN = 21;
-constexpr uint8_t I2C_SCL_PIN = 22;
+const uint8_t RELAY_PINS[RELAY_COUNT] = {
+  16,
+  17
+};
 
-constexpr uint8_t STATUS_LED_PIN = 13;
-constexpr bool STATUS_LED_ACTIVE_LOW = false;
+// Esta placa no tiene tira RGB analógica de 3 hilos.
+#define PWM_LED_ENABLE 0
+#define PWM_LED_PIN_R 25
+#define PWM_LED_PIN_G 33
+#define PWM_LED_PIN_B 32
 
-#if ENABLE_PWM_RGB
-constexpr uint8_t PWM_LED_PIN_R = 14;
-constexpr uint8_t PWM_LED_PIN_G = 18;
-constexpr uint8_t PWM_LED_PIN_B = 19;
-constexpr bool PWM_RGB_COMMON_ANODE = false;
-constexpr uint32_t PWM_FREQUENCY = 5000;
-constexpr uint8_t PWM_RESOLUTION = 8;
-#endif
+#define WS2812_ENABLE 1
+#define WS2812_PIN 14
+#define WS2812_COUNT 8  // AJUSTA a tu cantidad real de LEDs
 
-#if ENABLE_WS2812
-constexpr uint8_t WS2812_PIN = 25;
-constexpr uint16_t WS2812_COUNT = 30;
-Adafruit_NeoPixel strip(WS2812_COUNT, WS2812_PIN, NEO_GRB + NEO_KHZ800);
-#endif
+// SIM800L por UART2 del ESP32, en los pines reales del módem (utilities.h).
+// ESP32 RX recibe del TX del SIM800L.
+// ESP32 TX transmite al RX del SIM800L.
+#define SIM800L_ENABLE 1
+#define SIM800L_RX_PIN MODEM_RX
+#define SIM800L_TX_PIN MODEM_TX
+#define SIM800L_BAUD 115200
 
-#if ENABLE_MCP23017_RELAYS
-constexpr uint8_t MCP23017_ADDRESS = 0x20;
-constexpr uint8_t RELAY_COUNT = 4;
-constexpr bool RELAY_ACTIVE_LOW = true;
+// En este hardware el encendido del módem lo resuelve setupModemPower()
+// (MODEM_POWER_ON + boost del IP5306), no un pulso de PWRKEY.
+#define SIM800L_PWRKEY_ENABLE 0
+#define SIM800L_PWRKEY_PIN MODEM_PWRKEY
+#define SIM800L_PWRKEY_ACTIVE_LOW 1
 
-constexpr uint8_t MCP_IODIRA = 0x00;
-constexpr uint8_t MCP_GPIOA = 0x12;
-constexpr uint8_t MCP_OLATA = 0x14;
-#endif
-
-// Comprobaciones básicas para evitar volver a introducir conflictos críticos.
-#if ENABLE_PWM_RGB
-static_assert(PWM_LED_PIN_R != MODEM_RX_PIN && PWM_LED_PIN_R != MODEM_TX_PIN,
-              "Conflicto de pin PWM rojo con UART del modem");
-static_assert(PWM_LED_PIN_G != MODEM_RX_PIN && PWM_LED_PIN_G != MODEM_TX_PIN,
-              "Conflicto de pin PWM verde con UART del modem");
-static_assert(PWM_LED_PIN_B != MODEM_RX_PIN && PWM_LED_PIN_B != MODEM_TX_PIN,
-              "Conflicto de pin PWM azul con UART del modem");
-#endif
-#if ENABLE_WS2812
-static_assert(WS2812_PIN != MODEM_PWRKEY_PIN,
-              "Conflicto de WS2812 con PWRKEY del modem");
-#endif
 
 // ============================================================================
-// IP5306
-// ============================================================================
-
-constexpr uint8_t IP5306_ADDRESS = 0x75;
-constexpr uint8_t IP5306_REG_SYS_CTL0 = 0x00;
-constexpr uint8_t IP5306_REG_BAT_LEVEL = 0x78;
-
-bool ip5306Online = false;
-bool boostKeepOnEnabled = false;
-int batteryPercent = -1;
-uint32_t lastBatteryRefreshMs = 0;
-
-bool i2cWriteByte(uint8_t address, uint8_t reg, uint8_t value) {
-  Wire.beginTransmission(address);
-  Wire.write(reg);
-  Wire.write(value);
-  return Wire.endTransmission() == 0;
-}
-
-bool i2cReadByte(uint8_t address, uint8_t reg, uint8_t& value) {
-  Wire.beginTransmission(address);
-  Wire.write(reg);
-
-  if (Wire.endTransmission(false) != 0) {
-    return false;
-  }
-
-  if (Wire.requestFrom(address, static_cast<uint8_t>(1)) != 1) {
-    return false;
-  }
-
-  value = Wire.read();
-  return true;
-}
-
-bool setupIp5306() {
-  // Valor usado por el ejemplo oficial de LilyGo para mantener activo el boost.
-  boostKeepOnEnabled = i2cWriteByte(IP5306_ADDRESS, IP5306_REG_SYS_CTL0, 0x37);
-  ip5306Online = boostKeepOnEnabled;
-  return boostKeepOnEnabled;
-}
-
-int readIp5306BatteryPercent() {
-  uint8_t value = 0;
-
-  if (!i2cReadByte(IP5306_ADDRESS, IP5306_REG_BAT_LEVEL, value)) {
-    ip5306Online = false;
-    return -1;
-  }
-
-  ip5306Online = true;
-
-  switch (value & 0xF0) {
-    case 0xE0: return 25;
-    case 0xC0: return 50;
-    case 0x80: return 75;
-    case 0x00: return 100;
-    default: return 0;
-  }
-}
-
-void serviceBattery() {
-  const uint32_t now = millis();
-
-  if (lastBatteryRefreshMs == 0 || now - lastBatteryRefreshMs >= BATTERY_REFRESH_MS) {
-    lastBatteryRefreshMs = now;
-    batteryPercent = readIp5306BatteryPercent();
-  }
-}
-
-// ============================================================================
-// MÓDEM SIM800L
-// ============================================================================
-
-HardwareSerial SerialAT(1);
-TinyGsm modem(SerialAT);
-
-bool modemPowerEnabled = false;
-bool modemInitialized = false;
-bool modemResponsive = false;
-bool gsmRegistered = false;
-bool gprsConnected = false;
-bool ringDetected = false;
-
-SimStatus simStatus = SIM_ERROR;
-int signalQuality = 99;
-String modemInfo;
-String modemImei;
-String simCcid;
-String operatorName;
-String modemLastError = "booting";
-
-uint32_t modemReadyAtMs = 0;
-uint32_t lastModemInitAttemptMs = 0;
-uint32_t lastModemPollMs = 0;
-uint32_t lastOperatorRefreshMs = 0;
-uint32_t lastGprsAttemptMs = 0;
-uint32_t lastRingMs = 0;
-uint8_t modemInitFailures = 0;
-
-const char* simStatusText() {
-  switch (simStatus) {
-    case SIM_READY: return "ready";
-    case SIM_LOCKED: return "locked";
-    case SIM_ANTITHEFT_LOCKED: return "antitheft_locked";
-    case SIM_ERROR:
-    default: return "error";
-  }
-}
-
-int signalDbm() {
-  if (signalQuality < 0 || signalQuality > 31) {
-    return 0;
-  }
-  return -113 + (2 * signalQuality);
-}
-
-uint8_t signalBars() {
-  if (signalQuality == 99 || signalQuality < 2) return 0;
-  if (signalQuality < 7) return 1;
-  if (signalQuality < 12) return 2;
-  if (signalQuality < 17) return 3;
-  if (signalQuality < 22) return 4;
-  return 5;
-}
-
-bool gprsCredentialsConfigured() {
-#if ENABLE_GPRS
-  return strlen(NOPAL_GPRS_APN) > 0 &&
-         strcmp(NOPAL_GPRS_APN, "TU_APN") != 0;
-#else
-  return false;
-#endif
-}
-
-void pulseModemPowerKey() {
-  digitalWrite(MODEM_PWRKEY_PIN, HIGH);
-  delay(100);
-  digitalWrite(MODEM_PWRKEY_PIN, LOW);
-  delay(1100);
-  digitalWrite(MODEM_PWRKEY_PIN, HIGH);
-}
-
-void resetModemState() {
-  modemInitialized = false;
-  modemResponsive = false;
-  gsmRegistered = false;
-  gprsConnected = false;
-  simStatus = SIM_ERROR;
-  signalQuality = 99;
-  modemInfo = "";
-  modemImei = "";
-  simCcid = "";
-  operatorName = "";
-  modemLastError = "restarting";
-  lastModemInitAttemptMs = 0;
-  lastModemPollMs = 0;
-  lastOperatorRefreshMs = 0;
-  lastGprsAttemptMs = 0;
-  modemInitFailures = 0;
-}
-
-void powerOnModem() {
-  resetModemState();
-
-  digitalWrite(MODEM_RST_PIN, HIGH);
-  digitalWrite(MODEM_DTR_PIN, LOW);  // Mantener despierto.
-  digitalWrite(MODEM_POWER_ON_PIN, HIGH);
-  modemPowerEnabled = true;
-
-  pulseModemPowerKey();
-  modemReadyAtMs = millis() + MODEM_BOOT_DELAY_MS;
-
-  Serial.println("NOPAL:MODEM_POWERING_ON");
-}
-
-void hardwareRestartModem() {
-  Serial.println("NOPAL:MODEM_RESTARTING");
-
-  digitalWrite(MODEM_POWER_ON_PIN, LOW);
-  modemPowerEnabled = false;
-  delay(1200);
-
-  powerOnModem();
-}
-
-void setupModemHardware() {
-  pinMode(MODEM_RST_PIN, OUTPUT);
-  pinMode(MODEM_PWRKEY_PIN, OUTPUT);
-  pinMode(MODEM_POWER_ON_PIN, OUTPUT);
-  pinMode(MODEM_DTR_PIN, OUTPUT);
-  pinMode(MODEM_RI_PIN, INPUT);
-
-  digitalWrite(MODEM_RST_PIN, HIGH);
-  digitalWrite(MODEM_PWRKEY_PIN, HIGH);
-  digitalWrite(MODEM_POWER_ON_PIN, LOW);
-  digitalWrite(MODEM_DTR_PIN, LOW);
-
-  SerialAT.begin(115200, SERIAL_8N1, MODEM_RX_PIN, MODEM_TX_PIN);
-  powerOnModem();
-}
-
-void initializeModemIfNeeded() {
-  if (!modemPowerEnabled || modemInitialized) {
-    return;
-  }
-
-  const uint32_t now = millis();
-
-  if (static_cast<int32_t>(now - modemReadyAtMs) < 0) {
-    return;
-  }
-
-  if (lastModemInitAttemptMs != 0 &&
-      now - lastModemInitAttemptMs < MODEM_INIT_RETRY_MS) {
-    return;
-  }
-
-  lastModemInitAttemptMs = now;
-  Serial.println("NOPAL:MODEM_INITIALIZING");
-
-  modemResponsive = modem.init();
-
-  if (!modemResponsive) {
-    modemLastError = "no_at_response";
-    modemInitFailures++;
-    Serial.print("ERR:MODEM_NO_AT_RESPONSE,attempt=");
-    Serial.println(modemInitFailures);
-
-    if (modemInitFailures >= 3) {
-      Serial.println("WARN:MODEM_AUTOMATIC_POWER_CYCLE");
-      hardwareRestartModem();
-    }
-    return;
-  }
-
-  modemInitFailures = 0;
-  modemInitialized = true;
-  modemLastError = "";
-  modemInfo = modem.getModemInfo();
-  modemImei = modem.getIMEI();
-  simCcid = modem.getSimCCID();
-  simStatus = modem.getSimStatus(4000);
-
-  if (simStatus == SIM_LOCKED && strlen(NOPAL_SIM_PIN) > 0) {
-    if (modem.simUnlock(NOPAL_SIM_PIN)) {
-      delay(500);
-      simStatus = modem.getSimStatus(4000);
-    }
-  }
-
-  Serial.print("NOPAL:MODEM_READY,info=");
-  Serial.print(modemInfo);
-  Serial.print(",imei=");
-  Serial.println(modemImei);
-}
-
-void pollModem() {
-  if (!modemInitialized) {
-    return;
-  }
-
-  modemResponsive = modem.testAT(1500);
-
-  if (!modemResponsive) {
-    gsmRegistered = false;
-    gprsConnected = false;
-    modemLastError = "lost_at_response";
-    modemInitialized = false;
-    modemReadyAtMs = millis() + 2000;
-    Serial.println("WARN:MODEM_LOST_AT_RESPONSE");
-    return;
-  }
-
-  simStatus = modem.getSimStatus(2500);
-  gsmRegistered = (simStatus == SIM_READY) && modem.isNetworkConnected();
-  signalQuality = modem.getSignalQuality();
-
-  if (!gsmRegistered) {
-    gprsConnected = false;
-    modemLastError = simStatus == SIM_READY ? "searching_network" : "sim_not_ready";
-    return;
-  }
-
-  modemLastError = "";
-
-  const uint32_t now = millis();
-
-  if (operatorName.length() == 0 ||
-      now - lastOperatorRefreshMs >= MODEM_OPERATOR_REFRESH_MS) {
-    lastOperatorRefreshMs = now;
-    operatorName = modem.getOperator();
-  }
-
-#if ENABLE_GPRS
-  if (gprsCredentialsConfigured()) {
-    gprsConnected = modem.isGprsConnected();
-
-    if (!gprsConnected &&
-        (lastGprsAttemptMs == 0 || now - lastGprsAttemptMs >= GPRS_RETRY_INTERVAL_MS)) {
-      lastGprsAttemptMs = now;
-      Serial.print("NOPAL:GPRS_CONNECTING,apn=");
-      Serial.println(NOPAL_GPRS_APN);
-
-      gprsConnected = modem.gprsConnect(
-        NOPAL_GPRS_APN,
-        NOPAL_GPRS_USER,
-        NOPAL_GPRS_PASSWORD
-      );
-
-      Serial.println(gprsConnected ? "NOPAL:GPRS_READY" : "WARN:GPRS_CONNECT_FAILED");
-    }
-  } else {
-    gprsConnected = false;
-  }
-#endif
-}
-
-void serviceRingIndicator() {
-  const bool ringNow = digitalRead(MODEM_RI_PIN) == LOW;
-
-  if (ringNow) {
-    ringDetected = true;
-    lastRingMs = millis();
-  } else if (ringDetected && millis() - lastRingMs > 3000) {
-    ringDetected = false;
-  }
-}
-
-void serviceModem() {
-  serviceRingIndicator();
-  initializeModemIfNeeded();
-
-  if (modemInitialized) {
-    modem.maintain();
-  }
-
-  const uint32_t now = millis();
-
-  if (modemInitialized &&
-      (lastModemPollMs == 0 || now - lastModemPollMs >= MODEM_POLL_INTERVAL_MS)) {
-    lastModemPollMs = now;
-    pollModem();
-  }
-}
-
-bool validPhoneNumber(const String& phone) {
-  if (phone.length() < 5 || phone.length() > 24) {
-    return false;
-  }
-
-  for (size_t i = 0; i < phone.length(); i++) {
-    const char c = phone.charAt(i);
-    if (!(isDigit(c) || (i == 0 && c == '+'))) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-bool sendSms(const String& phone, const String& message, String& error) {
-  if (!modemInitialized || !modemResponsive) {
-    error = "modem_not_ready";
-    return false;
-  }
-
-  if (!gsmRegistered) {
-    error = "gsm_not_registered";
-    return false;
-  }
-
-  if (!validPhoneNumber(phone)) {
-    error = "invalid_phone";
-    return false;
-  }
-
-  if (message.length() == 0 || message.length() > 160) {
-    error = "message_must_be_1_to_160_chars";
-    return false;
-  }
-
-  const bool ok = modem.sendSMS(phone, message);
-  error = ok ? "" : "send_failed";
-  return ok;
-}
-
-// ============================================================================
-// LED AZUL DE ESTADO
-// ============================================================================
-
-void setStatusLed(bool on) {
-  digitalWrite(
-    STATUS_LED_PIN,
-    (on != STATUS_LED_ACTIVE_LOW) ? HIGH : LOW
-  );
-}
-
-void serviceStatusLed() {
-  static uint32_t lastToggleMs = 0;
-  static bool ledOn = false;
-
-  if (gsmRegistered) {
-    if (!ledOn) {
-      ledOn = true;
-      setStatusLed(true);
-    }
-    return;
-  }
-
-  const uint32_t interval = modemResponsive ? 500UL : 140UL;
-  const uint32_t now = millis();
-
-  if (now - lastToggleMs >= interval) {
-    lastToggleMs = now;
-    ledOn = !ledOn;
-    setStatusLed(ledOn);
-  }
-}
-
-// ============================================================================
-// MCP23017 — 4 RELÉS POR I2C
-// ============================================================================
-
-#if ENABLE_MCP23017_RELAYS
-bool relayExpanderOnline = false;
-uint8_t relayOutputShadow = RELAY_ACTIVE_LOW ? 0x0F : 0x00;
-
-bool mcpWriteRegister(uint8_t reg, uint8_t value) {
-  return i2cWriteByte(MCP23017_ADDRESS, reg, value);
-}
-
-void setupRelayExpander() {
-  relayExpanderOnline = mcpWriteRegister(MCP_IODIRA, 0xF0);
-
-  if (!relayExpanderOnline) {
-    Serial.println("WARN:MCP23017_NOT_FOUND,relays=disabled");
-    return;
-  }
-
-  relayOutputShadow = RELAY_ACTIVE_LOW ? 0x0F : 0x00;
-  relayExpanderOnline = mcpWriteRegister(MCP_OLATA, relayOutputShadow);
-
-  Serial.println(relayExpanderOnline
-    ? "NOPAL:MCP23017_READY,address=0x20,relays=4"
-    : "WARN:MCP23017_WRITE_FAILED");
-}
-
-uint8_t availableRelayCount() {
-  return relayExpanderOnline ? RELAY_COUNT : 0;
-}
-
-bool validRelayIndex(int index) {
-  return relayExpanderOnline && index >= 0 && index < RELAY_COUNT;
-}
-
-void setRelay(uint8_t index, bool on) {
-  if (!validRelayIndex(index)) {
-    return;
-  }
-
-  const uint8_t mask = static_cast<uint8_t>(1U << index);
-  const bool logicalHigh = RELAY_ACTIVE_LOW ? !on : on;
-
-  if (logicalHigh) {
-    relayOutputShadow |= mask;
-  } else {
-    relayOutputShadow &= static_cast<uint8_t>(~mask);
-  }
-
-  if (!mcpWriteRegister(MCP_OLATA, relayOutputShadow)) {
-    relayExpanderOnline = false;
-    Serial.println("ERR:MCP23017_LOST");
-  }
-}
-
-bool getRelay(uint8_t index) {
-  if (!validRelayIndex(index)) {
-    return false;
-  }
-
-  const bool pinHigh = (relayOutputShadow & (1U << index)) != 0;
-  return RELAY_ACTIVE_LOW ? !pinHigh : pinHigh;
-}
-#else
-void setupRelayExpander() {}
-uint8_t availableRelayCount() { return 0; }
-bool validRelayIndex(int) { return false; }
-void setRelay(uint8_t, bool) {}
-bool getRelay(uint8_t) { return false; }
-#endif
-
-// ============================================================================
-// RGB PWM
-// ============================================================================
-
-#if ENABLE_PWM_RGB
-#if ESP_ARDUINO_VERSION_MAJOR < 3
-constexpr uint8_t PWM_CHANNEL_R = 0;
-constexpr uint8_t PWM_CHANNEL_G = 1;
-constexpr uint8_t PWM_CHANNEL_B = 2;
-#endif
-
-uint8_t pwmRed = 0;
-uint8_t pwmGreen = 0;
-uint8_t pwmBlue = 0;
-
-uint8_t pwmDuty(uint8_t value) {
-  return PWM_RGB_COMMON_ANODE ? static_cast<uint8_t>(255 - value) : value;
-}
-
-void setupPwmLed() {
-#if ESP_ARDUINO_VERSION_MAJOR >= 3
-  ledcAttach(PWM_LED_PIN_R, PWM_FREQUENCY, PWM_RESOLUTION);
-  ledcAttach(PWM_LED_PIN_G, PWM_FREQUENCY, PWM_RESOLUTION);
-  ledcAttach(PWM_LED_PIN_B, PWM_FREQUENCY, PWM_RESOLUTION);
-#else
-  ledcSetup(PWM_CHANNEL_R, PWM_FREQUENCY, PWM_RESOLUTION);
-  ledcSetup(PWM_CHANNEL_G, PWM_FREQUENCY, PWM_RESOLUTION);
-  ledcSetup(PWM_CHANNEL_B, PWM_FREQUENCY, PWM_RESOLUTION);
-
-  ledcAttachPin(PWM_LED_PIN_R, PWM_CHANNEL_R);
-  ledcAttachPin(PWM_LED_PIN_G, PWM_CHANNEL_G);
-  ledcAttachPin(PWM_LED_PIN_B, PWM_CHANNEL_B);
-#endif
-}
-
-void setPwmLedColor(uint8_t red, uint8_t green, uint8_t blue) {
-  pwmRed = red;
-  pwmGreen = green;
-  pwmBlue = blue;
-
-#if ESP_ARDUINO_VERSION_MAJOR >= 3
-  ledcWrite(PWM_LED_PIN_R, pwmDuty(red));
-  ledcWrite(PWM_LED_PIN_G, pwmDuty(green));
-  ledcWrite(PWM_LED_PIN_B, pwmDuty(blue));
-#else
-  ledcWrite(PWM_CHANNEL_R, pwmDuty(red));
-  ledcWrite(PWM_CHANNEL_G, pwmDuty(green));
-  ledcWrite(PWM_CHANNEL_B, pwmDuty(blue));
-#endif
-}
-#else
-void setupPwmLed() {}
-void setPwmLedColor(uint8_t, uint8_t, uint8_t) {}
-#endif
-
-// ============================================================================
-// WS2812
-// ============================================================================
-
-#if ENABLE_WS2812
-uint8_t wsRed = 0;
-uint8_t wsGreen = 0;
-uint8_t wsBlue = 0;
-
-void setupWs2812() {
-  strip.begin();
-  strip.clear();
-  strip.show();
-}
-
-void setWs2812Color(uint8_t red, uint8_t green, uint8_t blue) {
-  wsRed = red;
-  wsGreen = green;
-  wsBlue = blue;
-  strip.fill(strip.Color(red, green, blue));
-  strip.show();
-}
-#else
-void setupWs2812() {}
-void setWs2812Color(uint8_t, uint8_t, uint8_t) {}
-#endif
-
-// ============================================================================
-// WI-FI, AP DE RECUPERACIÓN Y mDNS
+// SERVIDOR WEB
 // ============================================================================
 
 WebServer server(HTTP_PORT);
@@ -743,50 +132,350 @@ bool webServerStarted = false;
 bool mdnsStarted = false;
 bool recoveryApActive = false;
 bool wifiWasConnected = false;
+
 uint32_t lastWifiReconnectAttemptMs = 0;
+
 String recoveryApSsid;
+
+
+// ============================================================================
+// WS2812
+// ============================================================================
+
+#if WS2812_ENABLE
+
+  #include <Adafruit_NeoPixel.h>
+
+  Adafruit_NeoPixel strip(
+    WS2812_COUNT,
+    WS2812_PIN,
+    NEO_GRB + NEO_KHZ800
+  );
+
+#endif
+
+
+// ============================================================================
+// SIM800L
+// ============================================================================
+
+#if SIM800L_ENABLE
+
+  HardwareSerial sim800Serial(2);
+
+  String lastSimCommand;
+  String lastSimResponse;
+  uint32_t lastSimActivityMs = 0;
+
+#endif
+
+
+// ============================================================================
+// VARIABLES GENERALES
+// ============================================================================
+
+String inputLine;
+
+#if ESP_ARDUINO_VERSION_MAJOR < 3
+
+  const uint8_t PWM_CHANNEL_R = 0;
+  const uint8_t PWM_CHANNEL_G = 1;
+  const uint8_t PWM_CHANNEL_B = 2;
+
+#endif
+
+
+// ============================================================================
+// PROTOTIPOS
+// ============================================================================
+
+void serviceNetwork();
+void maintainWifiConnection();
+void handleCommand(String line);
+
+#if SIM800L_ENABLE
+// Declaración explícita: el auto-prototipado de Arduino no resuelve bien
+// los parámetros con valor por defecto cuando la función se usa dentro de
+// un lambda (como en el handler de /api/sim en setupWebServer()).
+String transactSim800l(const String& atCommand, uint32_t timeoutMs = 1800);
+#endif
+
+
+// ============================================================================
+// FUNCIONES AUXILIARES
+// ============================================================================
+
+uint8_t clampColor(int value) {
+  if (value < 0) {
+    return 0;
+  }
+
+  if (value > 255) {
+    return 255;
+  }
+
+  return static_cast<uint8_t>(value);
+}
+
+
+bool validRelayIndex(int index) {
+  return index >= 0 && index < RELAY_COUNT;
+}
+
+
+void printChipIdentification() {
+  Serial.print(ESP.getChipModel());
+}
+
 
 String chipSuffix() {
   char suffix[9] = {0};
-  const uint32_t chipId = static_cast<uint32_t>(ESP.getEfuseMac() & 0xFFFFFFULL);
+
+  const uint32_t chipId =
+    static_cast<uint32_t>(ESP.getEfuseMac() & 0xFFFFFFULL);
+
   snprintf(suffix, sizeof(suffix), "%06lX", static_cast<unsigned long>(chipId));
+
   return String(suffix);
 }
 
+
 bool wifiCredentialsConfigured() {
   const String ssid = String(NOPAL_WIFI_SSID);
-  return ssid.length() > 0 && ssid != "TU_RED_WIFI";
+
+  return ssid.length() > 0 &&
+         ssid != "TU_RED_WIFI";
 }
+
 
 String activeIpAddress() {
   if (WiFi.status() == WL_CONNECTED) {
     return WiFi.localIP().toString();
   }
+
   if (recoveryApActive) {
     return WiFi.softAPIP().toString();
   }
+
   return "0.0.0.0";
 }
 
+
 String wifiModeText() {
-  if (WiFi.status() == WL_CONNECTED && recoveryApActive) return "sta+ap";
-  if (WiFi.status() == WL_CONNECTED) return "sta";
-  if (recoveryApActive) return "ap";
+  if (WiFi.status() == WL_CONNECTED && recoveryApActive) {
+    return "sta+ap";
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    return "sta";
+  }
+
+  if (recoveryApActive) {
+    return "ap";
+  }
+
   return "offline";
 }
+
+
+String jsonEscape(const String& input) {
+  String output;
+  output.reserve(input.length() + 16);
+
+  for (size_t index = 0; index < input.length(); index++) {
+    const char character = input.charAt(index);
+
+    switch (character) {
+      case '\\':
+        output += "\\\\";
+        break;
+
+      case '"':
+        output += "\\\"";
+        break;
+
+      case '\n':
+        output += "\\n";
+        break;
+
+      case '\r':
+        output += "\\r";
+        break;
+
+      case '\t':
+        output += "\\t";
+        break;
+
+      default:
+        output += character;
+        break;
+    }
+  }
+
+  return output;
+}
+
+
+// ============================================================================
+// RELÉS
+// ============================================================================
+
+void setRelay(uint8_t index, bool on) {
+  if (index >= RELAY_COUNT) {
+    return;
+  }
+
+  const bool outputLevel = RELAY_ACTIVE_LOW ? !on : on;
+
+  digitalWrite(
+    RELAY_PINS[index],
+    outputLevel ? HIGH : LOW
+  );
+}
+
+
+bool getRelay(uint8_t index) {
+  if (index >= RELAY_COUNT) {
+    return false;
+  }
+
+  const bool pinIsHigh =
+    digitalRead(RELAY_PINS[index]) == HIGH;
+
+  return RELAY_ACTIVE_LOW
+    ? !pinIsHigh
+    : pinIsHigh;
+}
+
+
+// ============================================================================
+// PWM RGB (deshabilitado en esta placa, ver PWM_LED_ENABLE)
+// ============================================================================
+
+void setupPwmLed() {
+
+#if PWM_LED_ENABLE
+
+  pinMode(PWM_LED_PIN_R, OUTPUT);
+  pinMode(PWM_LED_PIN_G, OUTPUT);
+  pinMode(PWM_LED_PIN_B, OUTPUT);
+
+  #if ESP_ARDUINO_VERSION_MAJOR >= 3
+
+    ledcAttach(PWM_LED_PIN_R, 5000, 8);
+    ledcAttach(PWM_LED_PIN_G, 5000, 8);
+    ledcAttach(PWM_LED_PIN_B, 5000, 8);
+
+  #else
+
+    ledcSetup(PWM_CHANNEL_R, 5000, 8);
+    ledcSetup(PWM_CHANNEL_G, 5000, 8);
+    ledcSetup(PWM_CHANNEL_B, 5000, 8);
+
+    ledcAttachPin(PWM_LED_PIN_R, PWM_CHANNEL_R);
+    ledcAttachPin(PWM_LED_PIN_G, PWM_CHANNEL_G);
+    ledcAttachPin(PWM_LED_PIN_B, PWM_CHANNEL_B);
+
+  #endif
+
+#endif
+}
+
+
+void setPwmLedColor(uint8_t red, uint8_t green, uint8_t blue) {
+
+#if PWM_LED_ENABLE
+
+  #if ESP_ARDUINO_VERSION_MAJOR >= 3
+
+    ledcWrite(PWM_LED_PIN_R, red);
+    ledcWrite(PWM_LED_PIN_G, green);
+    ledcWrite(PWM_LED_PIN_B, blue);
+
+  #else
+
+    ledcWrite(PWM_CHANNEL_R, red);
+    ledcWrite(PWM_CHANNEL_G, green);
+    ledcWrite(PWM_CHANNEL_B, blue);
+
+  #endif
+
+#endif
+}
+
+
+// ============================================================================
+// WS2812
+// ============================================================================
+
+void setWs2812Color(uint8_t red, uint8_t green, uint8_t blue) {
+
+#if WS2812_ENABLE
+
+  strip.fill(
+    strip.Color(red, green, blue)
+  );
+
+  strip.show();
+
+#endif
+}
+
+
+bool setWs2812Segment(int start, int count, uint8_t red, uint8_t green, uint8_t blue) {
+
+#if WS2812_ENABLE
+
+  if (start < 0 || start >= WS2812_COUNT || count < 1) {
+    return false;
+  }
+
+  const int lastIndex = min(start + count, static_cast<int>(WS2812_COUNT));
+
+  for (int index = start; index < lastIndex; index++) {
+    strip.setPixelColor(index, strip.Color(red, green, blue));
+  }
+
+  strip.show();
+
+  return true;
+
+#else
+
+  return false;
+
+#endif
+}
+
+
+// ============================================================================
+// WI-FI
+// ============================================================================
+
+void setWifiHostname() {
+  // Debe llamarse antes de iniciar Wi-Fi.
+  WiFi.setHostname(NOPAL_HOSTNAME);
+}
+
 
 void startRecoveryAccessPoint() {
   if (recoveryApActive) {
     return;
   }
 
-  recoveryApSsid = String("NOPAL-TCALL-") + chipSuffix();
+  recoveryApSsid = String("NOPAL-") + chipSuffix();
+
   WiFi.mode(WIFI_AP_STA);
+
+  const size_t passwordLength = strlen(NOPAL_AP_PASSWORD);
 
   bool started = false;
 
-  if (strlen(NOPAL_AP_PASSWORD) >= 8) {
-    started = WiFi.softAP(recoveryApSsid.c_str(), NOPAL_AP_PASSWORD);
+  if (passwordLength >= 8) {
+    started = WiFi.softAP(
+      recoveryApSsid.c_str(),
+      NOPAL_AP_PASSWORD
+    );
   } else {
     Serial.println("WARN:AP_PASSWORD_TOO_SHORT_STARTING_OPEN_AP");
     started = WiFi.softAP(recoveryApSsid.c_str());
@@ -804,6 +493,7 @@ void startRecoveryAccessPoint() {
   }
 }
 
+
 void startMdnsIfPossible() {
   if (mdnsStarted || WiFi.status() != WL_CONNECTED) {
     return;
@@ -812,6 +502,7 @@ void startMdnsIfPossible() {
   if (MDNS.begin(NOPAL_HOSTNAME)) {
     MDNS.addService("http", "tcp", HTTP_PORT);
     mdnsStarted = true;
+
     Serial.print("NOPAL:MDNS_READY,http://");
     Serial.print(NOPAL_HOSTNAME);
     Serial.println(".local/");
@@ -820,10 +511,9 @@ void startMdnsIfPossible() {
   }
 }
 
+
 void setupWifi() {
-  WiFi.setHostname(NOPAL_HOSTNAME);
-  WiFi.setAutoReconnect(true);
-  WiFi.persistent(false);
+  setWifiHostname();
 
   if (!wifiCredentialsConfigured()) {
     Serial.println("WARN:WIFI_CREDENTIALS_NOT_CONFIGURED");
@@ -832,31 +522,43 @@ void setupWifi() {
   }
 
   WiFi.mode(WIFI_STA);
-  WiFi.begin(NOPAL_WIFI_SSID, NOPAL_WIFI_PASSWORD);
+  WiFi.setAutoReconnect(true);
 
   Serial.print("NOPAL:WIFI_CONNECTING,ssid=");
   Serial.println(NOPAL_WIFI_SSID);
 
+  WiFi.begin(
+    NOPAL_WIFI_SSID,
+    NOPAL_WIFI_PASSWORD
+  );
+
   const uint32_t startedAt = millis();
 
-  while (WiFi.status() != WL_CONNECTED &&
-         millis() - startedAt < WIFI_CONNECT_TIMEOUT_MS) {
-    serviceStatusLed();
-    delay(25);
+  while (
+    WiFi.status() != WL_CONNECTED &&
+    millis() - startedAt < WIFI_CONNECT_TIMEOUT_MS
+  ) {
+    delay(100);
   }
 
   if (WiFi.status() == WL_CONNECTED) {
     wifiWasConnected = true;
-    Serial.print("NOPAL:WIFI_READY,ip=");
+
+    Serial.print("NOPAL:WIFI_READY,ssid=");
+    Serial.print(WiFi.SSID());
+    Serial.print(",ip=");
     Serial.print(WiFi.localIP());
     Serial.print(",rssi=");
     Serial.println(WiFi.RSSI());
+
     startMdnsIfPossible();
-  } else {
-    Serial.println("WARN:WIFI_CONNECTION_TIMEOUT");
-    startRecoveryAccessPoint();
+    return;
   }
+
+  Serial.println("WARN:WIFI_CONNECTION_TIMEOUT");
+  startRecoveryAccessPoint();
 }
+
 
 void maintainWifiConnection() {
   const bool connected = WiFi.status() == WL_CONNECTED;
@@ -864,6 +566,7 @@ void maintainWifiConnection() {
   if (connected) {
     if (!wifiWasConnected) {
       wifiWasConnected = true;
+
       Serial.print("NOPAL:WIFI_RECONNECTED,ip=");
       Serial.println(WiFi.localIP());
     }
@@ -875,69 +578,55 @@ void maintainWifiConnection() {
   if (wifiWasConnected) {
     wifiWasConnected = false;
     Serial.println("WARN:WIFI_DISCONNECTED");
-
-    if (mdnsStarted) {
-      MDNS.end();
-      mdnsStarted = false;
-    }
   }
 
   if (!wifiCredentialsConfigured()) {
-    startRecoveryAccessPoint();
+    if (!recoveryApActive) {
+      startRecoveryAccessPoint();
+    }
+
     return;
   }
 
   const uint32_t now = millis();
 
-  if (now - lastWifiReconnectAttemptMs < WIFI_RECONNECT_INTERVAL_MS) {
+  if (
+    now - lastWifiReconnectAttemptMs <
+    WIFI_RECONNECT_INTERVAL_MS
+  ) {
     return;
   }
 
   lastWifiReconnectAttemptMs = now;
-  startRecoveryAccessPoint();
-  Serial.println("NOPAL:WIFI_RECONNECTING");
-  WiFi.begin(NOPAL_WIFI_SSID, NOPAL_WIFI_PASSWORD);
-}
 
-// ============================================================================
-// JSON Y PANEL WEB
-// ============================================================================
-
-String jsonEscape(const String& input) {
-  String output;
-  output.reserve(input.length() + 16);
-
-  for (size_t i = 0; i < input.length(); i++) {
-    const char c = input.charAt(i);
-    switch (c) {
-      case '\\': output += "\\\\"; break;
-      case '"': output += "\\\""; break;
-      case '\n': output += "\\n"; break;
-      case '\r': output += "\\r"; break;
-      case '\t': output += "\\t"; break;
-      default: output += c; break;
-    }
+  if (!recoveryApActive) {
+    startRecoveryAccessPoint();
   }
 
-  return output;
+  Serial.println("NOPAL:WIFI_RECONNECTING");
+
+  WiFi.begin(
+    NOPAL_WIFI_SSID,
+    NOPAL_WIFI_PASSWORD
+  );
 }
 
-String boolJson(bool value) {
-  return value ? "true" : "false";
-}
+
+// ============================================================================
+// SERVIDOR WEB Y ELEGANTOTA
+// ============================================================================
 
 String buildStatusJson() {
   String json;
-  json.reserve(1400);
+  json.reserve(640);
 
   json += "{";
-
   json += "\"role\":\"";
   json += DEVICE_ROLE;
   json += "\",";
 
   json += "\"board\":\"";
-  json += BOARD_ID;
+  json += DEVICE_BOARD;
   json += "\",";
 
   json += "\"firmware\":\"";
@@ -958,330 +647,481 @@ String buildStatusJson() {
 
   json += "\"wifi\":{";
   json += "\"connected\":";
-  json += boolJson(WiFi.status() == WL_CONNECTED);
+  json += WiFi.status() == WL_CONNECTED ? "true" : "false";
   json += ",";
+
   json += "\"mode\":\"";
   json += wifiModeText();
   json += "\",";
+
   json += "\"ssid\":\"";
-  if (WiFi.status() == WL_CONNECTED) {
-    json += jsonEscape(WiFi.SSID());
-  }
+  json += WiFi.status() == WL_CONNECTED
+    ? jsonEscape(WiFi.SSID())
+    : "";
   json += "\",";
+
   json += "\"ip\":\"";
   json += activeIpAddress();
   json += "\",";
+
   json += "\"rssi\":";
-  json += String(WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0);
+  json += WiFi.status() == WL_CONNECTED
+    ? String(WiFi.RSSI())
+    : String(0);
   json += ",";
+
   json += "\"recovery_ap\":";
-  json += boolJson(recoveryApActive);
+  json += recoveryApActive ? "true" : "false";
   json += ",";
+
   json += "\"recovery_ssid\":\"";
-  if (recoveryApActive) {
-    json += jsonEscape(recoveryApSsid);
+  json += recoveryApActive
+    ? jsonEscape(recoveryApSsid)
+    : "";
+  json += "\"";
+  json += "},";
+
+  json += "\"relays\":[";
+
+  for (uint8_t index = 0; index < RELAY_COUNT; index++) {
+    if (index > 0) {
+      json += ",";
+    }
+
+    json += "{\"n\":";
+    json += String(index + 1);
+    json += ",\"name\":\"Rel\\u00e9 ";
+    json += String(index + 1);
+    json += "\",\"gpio\":";
+    json += String(RELAY_PINS[index]);
+    json += ",\"on\":";
+    json += getRelay(index) ? "true" : "false";
+    json += "}";
   }
-  json += "\"";
-  json += "},";
 
-  json += "\"modem\":{";
-  json += "\"power\":";
-  json += boolJson(modemPowerEnabled);
-  json += ",";
-  json += "\"responsive\":";
-  json += boolJson(modemResponsive);
-  json += ",";
-  json += "\"initialized\":";
-  json += boolJson(modemInitialized);
-  json += ",";
-  json += "\"sim_status\":\"";
-  json += simStatusText();
-  json += "\",";
-  json += "\"registered\":";
-  json += boolJson(gsmRegistered);
-  json += ",";
-  json += "\"operator\":\"";
-  json += jsonEscape(operatorName);
-  json += "\",";
-  json += "\"signal_csq\":";
-  json += String(signalQuality);
-  json += ",";
-  json += "\"signal_dbm\":";
-  json += String(signalDbm());
-  json += ",";
-  json += "\"signal_bars\":";
-  json += String(signalBars());
-  json += ",";
-  json += "\"gprs_configured\":";
-  json += boolJson(gprsCredentialsConfigured());
-  json += ",";
-  json += "\"gprs_connected\":";
-  json += boolJson(gprsConnected);
-  json += ",";
-  json += "\"ring\":";
-  json += boolJson(ringDetected);
-  json += ",";
-  json += "\"imei\":\"";
-  json += jsonEscape(modemImei);
-  json += "\",";
-  json += "\"ccid\":\"";
-  json += jsonEscape(simCcid);
-  json += "\",";
-  json += "\"info\":\"";
-  json += jsonEscape(modemInfo);
-  json += "\",";
-  json += "\"last_error\":\"";
-  json += jsonEscape(modemLastError);
-  json += "\"";
-  json += "},";
+  json += "],";
 
-  json += "\"power\":{";
-  json += "\"ip5306_online\":";
-  json += boolJson(ip5306Online);
-  json += ",";
-  json += "\"boost_keep_on\":";
-  json += boolJson(boostKeepOnEnabled);
-  json += ",";
-  json += "\"battery_percent\":";
-  json += String(batteryPercent);
+  json += "\"ota\":{";
+  json += "\"enabled\":true,";
+  json += "\"path\":\"/update\"";
   json += "},";
 
   json += "\"io\":{";
   json += "\"relays\":";
-  json += String(availableRelayCount());
-  json += ",";
-  json += "\"relay_expander_online\":";
-  json += boolJson(availableRelayCount() > 0);
+  json += String(RELAY_COUNT);
   json += ",";
   json += "\"pwm_led\":";
-  json += boolJson(ENABLE_PWM_RGB);
+  json += PWM_LED_ENABLE ? "true" : "false";
   json += ",";
   json += "\"ws2812\":";
-  json += boolJson(ENABLE_WS2812);
+  json += WS2812_ENABLE ? "true" : "false";
   json += ",";
   json += "\"ws2812_count\":";
-#if ENABLE_WS2812
-  json += String(WS2812_COUNT);
-#else
-  json += "0";
-#endif
+  json += String(WS2812_ENABLE ? WS2812_COUNT : 0);
+  json += ",";
+  json += "\"ws2812_pin\":";
+  json += String(WS2812_ENABLE ? WS2812_PIN : -1);
   json += "},";
 
-  json += "\"ota\":{\"enabled\":true,\"path\":\"/update\"}";
+  json += "\"sim800l\":{";
+  json += "\"enabled\":";
+  json += SIM800L_ENABLE ? "true" : "false";
+  json += ",";
+  json += "\"baud\":";
+  json += String(SIM800L_BAUD);
+
+#if SIM800L_ENABLE
+
+  json += ",";
+  json += "\"last_command\":\"";
+  json += jsonEscape(lastSimCommand);
+  json += "\",";
+  json += "\"last_response\":\"";
+  json += jsonEscape(lastSimResponse);
+  json += "\",";
+  json += "\"last_activity_ms\":";
+  json += String(lastSimActivityMs);
+
+#endif
+
+  json += "}";
   json += "}";
 
   return json;
 }
 
-const char PANEL_HTML[] PROGMEM = R"NOPALHTML(
-<!doctype html><html lang="es"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>NOPAL T-Call</title>
-<style>
-:root{--bg:#07130f;--card:#10231b;--line:#244b39;--green:#73f0a7;--text:#e9fff2;--muted:#92b7a2;--warn:#ffc85c;--bad:#ff7272}
-*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 90% 0,#173729 0,transparent 35%),var(--bg);color:var(--text);font:14px system-ui,Segoe UI,sans-serif}
-main{max-width:1050px;margin:auto;padding:22px}.top{display:flex;justify-content:space-between;align-items:center;gap:15px;margin-bottom:18px}h1{margin:0;font-size:25px}.tag{color:var(--green);font-weight:700}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}.card{background:linear-gradient(145deg,#12271e,#0c1c16);border:1px solid var(--line);border-radius:16px;padding:15px;box-shadow:0 14px 35px #0005}.card h2{font-size:13px;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);margin:0 0 12px}.value{font-size:22px;font-weight:800}.row{display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:1px solid #ffffff0d}.row:last-child{border:0}.ok{color:var(--green)}.bad{color:var(--bad)}.warn{color:var(--warn)}button,a.btn,input,textarea{border-radius:10px;border:1px solid var(--line);background:#0b1913;color:var(--text);padding:10px}button,a.btn{cursor:pointer;background:#173d2b;text-decoration:none;font-weight:750}button:hover,a.btn:hover{border-color:var(--green)}input,textarea{width:100%;margin:5px 0 9px}textarea{min-height:76px;resize:vertical}.actions{display:flex;flex-wrap:wrap;gap:8px}.wide{grid-column:1/-1}.foot{color:var(--muted);margin-top:14px;font-size:12px}
-</style></head><body><main>
-<div class="top"><div><div class="tag">NOPAL</div><h1>T-Call SIM800L</h1></div><a class="btn" href="/update">Actualizar OTA</a></div>
-<div class="grid">
-<section class="card"><h2>GSM</h2><div id="gsm" class="value">Cargando…</div><div id="gsmRows"></div></section>
-<section class="card"><h2>Wi-Fi</h2><div id="wifi" class="value">Cargando…</div><div id="wifiRows"></div></section>
-<section class="card"><h2>Energía</h2><div id="battery" class="value">—</div><div id="powerRows"></div></section>
-<section class="card"><h2>Sistema</h2><div id="systemRows"></div></section>
-<section class="card wide"><h2>Acciones autenticadas</h2>
-<div class="grid"><div><input id="user" placeholder="Usuario OTA"><input id="pass" type="password" placeholder="Contraseña OTA"></div>
-<div><input id="phone" placeholder="Teléfono, ej. +521..."><textarea id="message" maxlength="160" placeholder="Mensaje SMS, máximo 160 caracteres"></textarea></div></div>
-<div class="actions"><button onclick="sendSms()">Enviar SMS</button><button onclick="restartModem()">Reiniciar SIM800</button><button onclick="relay(1,true)">Relé 1 ON</button><button onclick="relay(1,false)">Relé 1 OFF</button></div>
-<div id="result" class="foot"></div></section>
-</div><div class="foot">LED azul fijo = GSM conectado · parpadeando = buscando o reiniciando.</div>
-<script>
-const $=id=>document.getElementById(id);const row=(a,b)=>`<div class="row"><span>${a}</span><b>${b}</b></div>`;
-function auth(){return 'Basic '+btoa($('user').value+':'+$('pass').value)}
-async function refresh(){try{const d=await fetch('/api/status',{cache:'no-store'}).then(r=>r.json());
-$('gsm').textContent=d.modem.registered?'CONECTADO':'SIN RED';$('gsm').className='value '+(d.modem.registered?'ok':'warn');
-$('gsmRows').innerHTML=row('SIM',d.modem.sim_status)+row('Operador',d.modem.operator||'—')+row('Señal',d.modem.signal_bars+'/5 · '+d.modem.signal_csq+' CSQ')+row('GPRS',d.modem.gprs_connected?'Sí':'No')+row('Error',d.modem.last_error||'Ninguno');
-$('wifi').textContent=d.wifi.connected?'CONECTADO':d.wifi.mode.toUpperCase();$('wifi').className='value '+(d.wifi.connected?'ok':'warn');
-$('wifiRows').innerHTML=row('SSID',d.wifi.ssid||d.wifi.recovery_ssid||'—')+row('IP',d.wifi.ip)+row('RSSI',d.wifi.rssi+' dBm');
-$('battery').textContent=d.power.battery_percent<0?'NO LEÍDA':d.power.battery_percent+'%';$('powerRows').innerHTML=row('IP5306',d.power.ip5306_online?'OK':'Error')+row('Boost keep-on',d.power.boost_keep_on?'Activo':'No');
-$('systemRows').innerHTML=row('Firmware',d.firmware)+row('Placa',d.board)+row('Uptime',Math.floor(d.uptime_ms/1000)+' s')+row('Heap',d.free_heap+' bytes')+row('Relés',d.io.relays);
-}catch(e){$('gsm').textContent='SIN RESPUESTA';$('gsm').className='value bad'}}
-async function post(url,data){const body=new URLSearchParams(data);const r=await fetch(url,{method:'POST',headers:{Authorization:auth(),'Content-Type':'application/x-www-form-urlencoded'},body});const t=await r.text();$('result').textContent=t;if(!r.ok)throw new Error(t);return t}
-async function sendSms(){try{await post('/api/sms',{phone:$('phone').value,message:$('message').value})}catch(e){}}
-async function restartModem(){try{await post('/api/modem/restart',{})}catch(e){}}
-async function relay(n,on){try{await post('/api/relay',{n,on:on?'1':'0'})}catch(e){}}
-setInterval(refresh,2500);refresh();
-</script></main></body></html>
-)NOPALHTML";
 
 bool checkApiAuth() {
   if (server.authenticate(NOPAL_OTA_USERNAME, NOPAL_OTA_PASSWORD)) {
     return true;
   }
+
   server.requestAuthentication();
   return false;
 }
 
-uint8_t clampColor(int value) {
-  if (value < 0) return 0;
-  if (value > 255) return 255;
-  return static_cast<uint8_t>(value);
+
+// Panel embebido: relés + NeoPixel + SIM800L + estado en vivo, protegido
+// con las mismas credenciales que /update. Sin "escenas" ni RGB PWM porque
+// esta placa no los tiene (ver PWM_LED_ENABLE arriba).
+const char INDEX_HTML[] PROGMEM = R"NOPALHTML(
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NOPAL · AM-036</title>
+<style>
+:root{
+  color-scheme:dark;
+  --bg:#101719;--panel:#182326;--panel2:#1e2c2f;--line:#304246;
+  --text:#edf6f1;--muted:#9bb0aa;--green:#65d690;--red:#ff6c6c;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;min-height:100vh;
+  background:radial-gradient(circle at 20% 0%,rgba(101,214,144,.10),transparent 35%),
+    linear-gradient(180deg,#11191b,#0c1214);
+  color:var(--text);font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+}
+main{max-width:1000px;margin:auto;padding:24px}
+header{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:20px}
+.brand{display:flex;align-items:center;gap:13px}
+.logo{width:44px;height:44px;border-radius:14px;display:grid;place-items:center;
+  background:linear-gradient(145deg,#276340,#173326);border:1px solid #4d8b63;font-size:24px}
+h1{font-size:21px;margin:0}.sub{color:var(--muted);font-size:13px}
+a{color:var(--green);text-decoration:none}
+.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px}
+.card{grid-column:span 6;background:linear-gradient(145deg,var(--panel),var(--panel2));
+  border:1px solid var(--line);border-radius:18px;padding:18px;box-shadow:0 14px 35px rgba(0,0,0,.20)}
+.card.full{grid-column:span 12}
+h2{font-size:14px;text-transform:uppercase;letter-spacing:.08em;color:#c5d8d2;margin:0 0 14px}
+.relays{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+.relay{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:12px;border-radius:13px;background:#111b1d;border:1px solid #2d4043}
+.badge{font-size:12px;padding:4px 9px;border-radius:999px;background:#253336;color:var(--muted)}
+.badge.on{background:rgba(101,214,144,.16);color:var(--green)}
+button,.button{border:1px solid #3a5155;background:#243438;color:var(--text);
+  padding:9px 12px;border-radius:11px;cursor:pointer;font-weight:650}
+button:hover,.button:hover{border-color:#6a8a8f}
+button.red{background:#6a2929;border-color:#a64444}
+.row{display:flex;flex-wrap:wrap;gap:9px;align-items:center}
+input[type=color]{width:55px;height:40px;padding:3px;background:#101719;border:1px solid #3a5155;border-radius:10px}
+input[type=number],input[type=text]{background:#101719;color:var(--text);border:1px solid #3a5155;
+  border-radius:9px;padding:8px}
+input[type=number]{width:72px}
+input[type=text]{flex:1;min-width:160px}
+.statgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.stat{padding:11px;border-radius:12px;background:#111b1d;border:1px solid #2c3d40}
+.stat b{display:block;font-size:17px}.stat span{font-size:11px;color:var(--muted);text-transform:uppercase}
+pre{white-space:pre-wrap;word-break:break-word;background:#0c1315;padding:12px;border-radius:12px;
+  border:1px solid #26373a;color:#acd4c0}
+footer{margin:18px 2px;color:var(--muted);font-size:12px}
+@media(max-width:760px){.card,.card.full{grid-column:span 12}.statgrid{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <div class="brand">
+    <div class="logo">🌵</div>
+    <div><h1>NOPAL · AM-036</h1><div class="sub" id="identity">Cargando estado…</div></div>
+  </div>
+  <a class="button" href="/update">Actualizar firmware</a>
+</header>
+
+<section class="grid">
+  <article class="card">
+    <h2>Relés</h2>
+    <div class="relays" id="relays"></div>
+  </article>
+
+  <article class="card">
+    <h2>NeoPixel global</h2>
+    <div class="row">
+      <input id="wsColor" type="color" value="#41d17d">
+      <button onclick="sendWsColor()">Aplicar color</button>
+      <button class="red" onclick="sendWsOff()">Apagar tira</button>
+    </div>
+    <p class="sub" id="wsInfo">—</p>
+  </article>
+
+  <article class="card">
+    <h2>NeoPixel individual</h2>
+    <div class="row">
+      <label>LED</label>
+      <input id="pixel" type="number" min="1" value="1">
+      <label>Cant.</label>
+      <input id="pixelCount" type="number" min="1" value="1">
+      <input id="pixelColor" type="color" value="#ff8c32">
+      <button onclick="sendPixel()">Aplicar</button>
+    </div>
+    <p class="sub">La numeración empieza en 1. "Cant." son LEDs consecutivos a partir de ese número.</p>
+  </article>
+
+  <article class="card">
+    <h2>SIM800L</h2>
+    <div class="row">
+      <button onclick="simQuery('CSQ')">Señal (CSQ)</button>
+      <button onclick="simQuery('CREG')">Registro</button>
+      <button onclick="simQuery('OPERATOR')">Operador</button>
+      <button onclick="simQuery('CCID')">CCID</button>
+      <button onclick="simQuery('IMEI')">IMEI</button>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <input id="simRaw" type="text" placeholder="AT+CSQ">
+      <button onclick="simSendRaw()">Enviar AT</button>
+    </div>
+    <pre id="simOut">Sin consultas todavía.</pre>
+  </article>
+
+  <article class="card full">
+    <h2>Estado del dispositivo</h2>
+    <div class="statgrid">
+      <div class="stat"><b id="wifi">—</b><span>Wi-Fi</span></div>
+      <div class="stat"><b id="ip">—</b><span>Dirección IP</span></div>
+      <div class="stat"><b id="simState">—</b><span>SIM800L</span></div>
+      <div class="stat"><b id="relaysOn">—</b><span>Relés activos</span></div>
+    </div>
+    <pre id="details">Esperando datos…</pre>
+  </article>
+</section>
+
+<footer>NOPAL Firmware )NOPALHTML" FW_VERSION R"NOPALHTML( · Accesorio AM-036 (T-Call SIM800L IP5306)</footer>
+</main>
+<script>
+const enc=o=>new URLSearchParams(o);
+
+async function post(path,data){
+  const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:enc(data)});
+  const t=await r.text();
+  if(!r.ok) throw new Error(t);
+  setTimeout(refresh,150);
+  return t;
+}
+function rgb(hex){return [parseInt(hex.slice(1,3),16),parseInt(hex.slice(3,5),16),parseInt(hex.slice(5,7),16)]}
+
+async function relay(n,on){try{await post('/api/relay',{n,on})}catch(e){alert(e.message)}}
+
+async function sendWsColor(){
+  const [r,g,b]=rgb(document.getElementById('wsColor').value);
+  try{await post('/api/led',{r,g,b})}catch(e){alert(e.message)}
+}
+async function sendWsOff(){
+  try{await post('/api/led',{r:0,g:0,b:0})}catch(e){alert(e.message)}
+}
+async function sendPixel(){
+  const [r,g,b]=rgb(document.getElementById('pixelColor').value);
+  const n=parseInt(document.getElementById('pixel').value,10)||1;
+  const count=parseInt(document.getElementById('pixelCount').value,10)||1;
+  try{await post('/api/led',{start:n-1,count,r,g,b})}catch(e){alert(e.message)}
 }
 
-bool parseAndSetColor(
-  const String& command,
-  uint8_t prefixLength,
-  void (*setColor)(uint8_t, uint8_t, uint8_t),
-  String& response
-) {
-  int red = 0;
-  int green = 0;
-  int blue = 0;
-
-  if (sscanf(command.c_str() + prefixLength, "%d,%d,%d", &red, &green, &blue) != 3) {
-    response = "ERR:INVALID_RGB";
-    return false;
-  }
-
-  setColor(clampColor(red), clampColor(green), clampColor(blue));
-  response = "OK";
-  return true;
+async function simQuery(action){
+  const out=document.getElementById('simOut');
+  out.textContent='Consultando '+action+'…';
+  try{
+    const t=await post('/api/sim',{action});
+    out.textContent=t;
+  }catch(e){out.textContent='ERROR: '+e.message}
+}
+async function simSendRaw(){
+  const raw=document.getElementById('simRaw').value.trim();
+  if(!raw){return}
+  const out=document.getElementById('simOut');
+  out.textContent='Enviando '+raw+'…';
+  try{
+    const t=await post('/api/sim',{action:'RAW',raw});
+    out.textContent=t;
+  }catch(e){out.textContent='ERROR: '+e.message}
 }
 
-bool handleRelayCommand(const String& command, String& response) {
-  if (command.length() < 2 || command.charAt(0) != 'R') {
-    return false;
-  }
-
-  if (availableRelayCount() == 0) {
-    response = "ERR:RELAY_EXPANDER_OFFLINE";
-    return true;
-  }
-
-  if (command.endsWith("?")) {
-    const int relayNumber = command.substring(1, command.length() - 1).toInt();
-    const int relayIndex = relayNumber - 1;
-
-    if (!validRelayIndex(relayIndex)) {
-      response = "ERR:INVALID_RELAY";
-      return true;
-    }
-
-    response = getRelay(relayIndex) ? "ON" : "OFF";
-    return true;
-  }
-
-  const int colon = command.indexOf(':');
-  if (colon <= 1) {
-    return false;
-  }
-
-  const int relayIndex = command.substring(1, colon).toInt() - 1;
-  if (!validRelayIndex(relayIndex)) {
-    response = "ERR:INVALID_RELAY";
-    return true;
-  }
-
-  String action = command.substring(colon + 1);
-  action.trim();
-  action.toUpperCase();
-
-  if (action == "ON") {
-    setRelay(relayIndex, true);
-    response = "OK";
-  } else if (action == "OFF") {
-    setRelay(relayIndex, false);
-    response = "OK";
-  } else {
-    response = "ERR:INVALID_ACTION";
-  }
-
-  return true;
+function renderRelays(relays){
+  const list=relays||[];
+  const box=document.getElementById('relays');
+  box.innerHTML='';
+  list.forEach(x=>{
+    box.innerHTML+=`<div class="relay"><div><b>${x.name}</b><br><span class="sub">GPIO ${x.gpio}</span></div><div class="row"><span class="badge ${x.on?'on':''}">${x.on?'ON':'OFF'}</span><button onclick="relay(${x.n},${x.on?'false':'true'})">Cambiar</button></div></div>`;
+  });
+  document.getElementById('relaysOn').textContent=list.filter(x=>x.on).length+'/'+list.length;
 }
+
+async function refresh(){
+  try{
+    const r=await fetch('/api/status',{cache:'no-store'});
+    const s=await r.json();
+
+    document.getElementById('identity').textContent=
+      (s.hostname||'—')+' · FW '+s.firmware;
+
+    document.getElementById('wifi').textContent=
+      s.wifi.connected?'Conectado':s.wifi.mode.toUpperCase();
+    document.getElementById('ip').textContent=s.wifi.ip;
+    document.getElementById('simState').textContent=s.sim800l.enabled?
+      (s.sim800l.last_response&&s.sim800l.last_response!=='TIMEOUT'?'Respondiendo':'Sin respuesta'):'Deshabilitado';
+
+    renderRelays(s.relays);
+
+    document.getElementById('wsInfo').textContent=
+      s.io.ws2812_count+' LED(s), GPIO '+(s.io.ws2812_pin!==undefined?s.io.ws2812_pin:'—');
+
+    document.getElementById('details').textContent=
+      `SSID: ${s.wifi.ssid||'—'}\nRSSI: ${s.wifi.rssi} dBm\n`+
+      `AP recuperación: ${s.wifi.recovery_ap?('activo ('+(s.wifi.recovery_ssid||'—')+')'):'inactivo'}\n`+
+      `Hostname: ${s.hostname||'—'}\nFirmware: ${s.firmware}\n`+
+      `SIM800L: baud ${s.sim800l.baud}, último cmd "${s.sim800l.last_command||'—'}" -> "${s.sim800l.last_response||'—'}"\n`+
+      `Heap libre: ${s.free_heap} bytes\nUptime: ${Math.floor(s.uptime_ms/1000)} s`;
+  }catch(e){
+    document.getElementById('identity').textContent='Sin respuesta del dispositivo';
+  }
+}
+refresh();setInterval(refresh,2500);
+</script>
+</body>
+</html>
+)NOPALHTML";
+
 
 void setupWebServer() {
   server.on("/", HTTP_GET, []() {
-    server.send_P(200, "text/html; charset=utf-8", PANEL_HTML);
+    if (!checkApiAuth()) return;
+
+    server.send_P(
+      200,
+      PSTR("text/html; charset=utf-8"),
+      INDEX_HTML
+    );
   });
 
   server.on("/api/status", HTTP_GET, []() {
-    server.sendHeader("Cache-Control", "no-store");
-    server.send(200, "application/json; charset=utf-8", buildStatusJson());
+    server.send(
+      200,
+      "application/json; charset=utf-8",
+      buildStatusJson()
+    );
   });
 
   server.on("/health", HTTP_GET, []() {
-    server.send(200, "text/plain; charset=utf-8", "OK");
-  });
-
-  server.on("/api/modem/restart", HTTP_POST, []() {
-    if (!checkApiAuth()) return;
-    hardwareRestartModem();
-    server.send(202, "application/json", "{\"ok\":true,\"status\":\"restarting\"}");
-  });
-
-  server.on("/api/sms", HTTP_POST, []() {
-    if (!checkApiAuth()) return;
-
-    String error;
-    const bool ok = sendSms(server.arg("phone"), server.arg("message"), error);
-
-    if (ok) {
-      server.send(200, "application/json", "{\"ok\":true}");
-    } else {
-      String body = String("{\"ok\":false,\"error\":\"") + jsonEscape(error) + "\"}";
-      server.send(400, "application/json", body);
-    }
-  });
-
-  server.on("/api/relay", HTTP_GET, []() {
-    if (!checkApiAuth()) return;
-
-    String response = "ERR:INVALID_RELAY";
-    handleRelayCommand(String("R") + server.arg("n") + "?", response);
-    server.send(response.startsWith("ERR") ? 400 : 200, "text/plain", response);
+    server.send(200, "text/plain", "OK");
   });
 
   server.on("/api/relay", HTTP_POST, []() {
     if (!checkApiAuth()) return;
 
+    const int relayNumber = server.arg("n").toInt();
+    const int relayIndex = relayNumber - 1;
+
+    if (!validRelayIndex(relayIndex)) {
+      server.send(400, "text/plain", "ERR:INVALID_RELAY");
+      return;
+    }
+
     const bool on = server.arg("on") == "true" || server.arg("on") == "1";
-    String response = "ERR:INVALID_RELAY";
-    handleRelayCommand(String("R") + server.arg("n") + ":" + (on ? "ON" : "OFF"), response);
-    server.send(response.startsWith("ERR") ? 400 : 200, "text/plain", response);
+    setRelay(relayIndex, on);
+
+    server.send(200, "text/plain", "OK");
   });
 
   server.on("/api/led", HTTP_POST, []() {
     if (!checkApiAuth()) return;
 
-    const String mode = server.arg("mode");
-    const String rgb = server.arg("r") + "," + server.arg("g") + "," + server.arg("b");
-    String response = "ERR:UNSUPPORTED_MODE";
+#if WS2812_ENABLE
 
-#if ENABLE_PWM_RGB
-    if (mode == "pwm") {
-      parseAndSetColor(String("LED:") + rgb, 4, setPwmLedColor, response);
-    }
-#endif
-#if ENABLE_WS2812
-    if (mode == "ws2812") {
-      parseAndSetColor(String("WS:") + rgb, 3, setWs2812Color, response);
-    }
-#endif
+    const uint8_t red = clampColor(server.arg("r").toInt());
+    const uint8_t green = clampColor(server.arg("g").toInt());
+    const uint8_t blue = clampColor(server.arg("b").toInt());
 
-    server.send(response.startsWith("ERR") ? 400 : 200, "text/plain", response);
+    if (server.hasArg("start") || server.hasArg("count")) {
+      const int start = server.arg("start").toInt();
+      const int count = server.hasArg("count") ? server.arg("count").toInt() : 1;
+
+      if (!setWs2812Segment(start, count, red, green, blue)) {
+        server.send(400, "text/plain", "ERR:INVALID_SEGMENT");
+        return;
+      }
+    } else {
+      setWs2812Color(red, green, blue);
+    }
+
+    server.send(200, "text/plain", "OK");
+
+#else
+
+    server.send(501, "text/plain", "ERR:WS2812_DISABLED_ON_THIS_BUILD");
+
+#endif
+  });
+
+  server.on("/api/sim", HTTP_POST, []() {
+    if (!checkApiAuth()) return;
+
+#if SIM800L_ENABLE
+
+    const String action = server.arg("action");
+    String atCommand;
+
+    if (action == "AT") {
+      atCommand = "AT";
+    } else if (action == "INFO") {
+      atCommand = "ATI";
+    } else if (action == "CSQ") {
+      atCommand = "AT+CSQ";
+    } else if (action == "CREG") {
+      atCommand = "AT+CREG?";
+    } else if (action == "CCID") {
+      atCommand = "AT+CCID";
+    } else if (action == "IMEI") {
+      atCommand = "AT+GSN";
+    } else if (action == "OPERATOR") {
+      atCommand = "AT+COPS?";
+    } else if (action == "RAW") {
+      String rawCommand = server.arg("raw");
+      rawCommand.trim();
+
+      if (!rawCommand.startsWith("AT") || rawCommand.length() > 100) {
+        server.send(400, "text/plain", "ERR:INVALID_AT_COMMAND");
+        return;
+      }
+
+      atCommand = rawCommand;
+    } else {
+      server.send(400, "text/plain", "ERR:UNKNOWN_ACTION");
+      return;
+    }
+
+    server.send(200, "text/plain", transactSim800l(atCommand));
+
+#else
+
+    server.send(501, "text/plain", "ERR:SIM800L_DISABLED_ON_THIS_BUILD");
+
+#endif
   });
 
   server.onNotFound([]() {
-    server.send(404, "application/json", "{\"error\":\"not_found\"}");
+    server.send(
+      404,
+      "application/json; charset=utf-8",
+      "{\"error\":\"not_found\"}"
+    );
   });
 
-  ElegantOTA.begin(&server, NOPAL_OTA_USERNAME, NOPAL_OTA_PASSWORD);
+  ElegantOTA.setAuth(
+    NOPAL_OTA_USERNAME,
+    NOPAL_OTA_PASSWORD
+  );
+
+  ElegantOTA.begin(&server);
+
   server.begin();
   webServerStarted = true;
 
-  Serial.print("NOPAL:HTTP_READY,ip=");
-  Serial.print(activeIpAddress());
-  Serial.println(",ota=/update");
+  Serial.print("NOPAL:HTTP_READY,port=");
+  Serial.print(HTTP_PORT);
+  Serial.print(",ota=/update,ip=");
+  Serial.println(activeIpAddress());
 }
+
 
 void serviceNetwork() {
   maintainWifiConnection();
@@ -1292,113 +1132,438 @@ void serviceNetwork() {
   }
 }
 
+
 // ============================================================================
-// IDENTIFICACIÓN NOPAL Y COMANDOS SERIAL
+// ENCENDIDO DEL MÓDEM (T-Call v1.3 IP5306 — ver utilities.h)
+// ============================================================================
+
+#if SIM800L_ENABLE
+
+void setupModemPower() {
+#ifdef MODEM_RST
+  // Mantener reset en alto (inactivo)
+  pinMode(MODEM_RST, OUTPUT);
+  digitalWrite(MODEM_RST, HIGH);
+#endif
+
+  pinMode(MODEM_PWRKEY, OUTPUT);
+  pinMode(MODEM_POWER_ON, OUTPUT);
+
+  // Encender primero la alimentación del módem
+  digitalWrite(MODEM_POWER_ON, HIGH);
+
+  pinMode(LED_GPIO, OUTPUT);
+  digitalWrite(LED_GPIO, LED_ON);
+
+  // Mantener el boost de 5V del IP5306 encendido; sin esto el SIM800L
+  // pierde alimentación bajo carga y deja de responder a comandos AT.
+  setupPMU();
+}
+
+#endif
+
+
+// ============================================================================
+// SIM800L: TRANSACCIONES AT
+// ============================================================================
+
+#if SIM800L_ENABLE
+
+void pulseSim800lPowerKey() {
+
+#if SIM800L_PWRKEY_ENABLE
+
+  pinMode(SIM800L_PWRKEY_PIN, OUTPUT);
+
+  const uint8_t activeLevel =
+    SIM800L_PWRKEY_ACTIVE_LOW ? LOW : HIGH;
+
+  const uint8_t idleLevel =
+    SIM800L_PWRKEY_ACTIVE_LOW ? HIGH : LOW;
+
+  digitalWrite(SIM800L_PWRKEY_PIN, idleLevel);
+  delay(100);
+
+  digitalWrite(SIM800L_PWRKEY_PIN, activeLevel);
+  delay(1200);
+
+  digitalWrite(SIM800L_PWRKEY_PIN, idleLevel);
+  delay(3000);
+
+#endif
+
+}
+
+
+String sanitizeSimResponse(String response) {
+  response.replace("\r", "");
+  response.trim();
+  response.replace("\n", "|");
+  response.replace(",", ";");
+
+  while (response.indexOf("||") >= 0) {
+    response.replace("||", "|");
+  }
+
+  return response;
+}
+
+
+String transactSim800l(
+  const String& atCommand,
+  uint32_t timeoutMs
+) {
+  while (sim800Serial.available() > 0) {
+    sim800Serial.read();
+  }
+
+  sim800Serial.print(atCommand);
+  sim800Serial.print("\r\n");
+
+  String response;
+  response.reserve(256);
+
+  const uint32_t startedAt = millis();
+  uint32_t lastByteAt = startedAt;
+  bool receivedAnyByte = false;
+
+  while (millis() - startedAt < timeoutMs) {
+    while (sim800Serial.available() > 0) {
+      const char character =
+        static_cast<char>(sim800Serial.read());
+
+      if (response.length() < 511) {
+        response += character;
+      }
+
+      receivedAnyByte = true;
+      lastByteAt = millis();
+    }
+
+    const bool finalResponseSeen =
+      response.indexOf("\r\nOK\r\n") >= 0 ||
+      response.indexOf("\r\nERROR\r\n") >= 0 ||
+      response.indexOf("+CME ERROR:") >= 0 ||
+      response.indexOf("+CMS ERROR:") >= 0;
+
+    if (
+      receivedAnyByte &&
+      finalResponseSeen &&
+      millis() - lastByteAt > 80
+    ) {
+      break;
+    }
+
+    serviceNetwork();
+    delay(1);
+  }
+
+  lastSimCommand = atCommand;
+  lastSimResponse = sanitizeSimResponse(response);
+  lastSimActivityMs = millis();
+
+  if (lastSimResponse.length() == 0) {
+    lastSimResponse = "TIMEOUT";
+  }
+
+  return lastSimResponse;
+}
+
+
+void printSimTransaction(const String& atCommand) {
+  const String response = transactSim800l(atCommand);
+
+  Serial.print("SIM800L,cmd=");
+  Serial.print(atCommand);
+  Serial.print(",response=");
+  Serial.println(response);
+}
+
+
+void setupSim800l() {
+  setupModemPower();
+
+  pulseSim800lPowerKey();
+
+  sim800Serial.begin(
+    SIM800L_BAUD,
+    SERIAL_8N1,
+    SIM800L_RX_PIN,
+    SIM800L_TX_PIN
+  );
+
+  delay(500);
+
+  Serial.print("NOPAL:SIM800L_UART_READY,baud=");
+  Serial.print(SIM800L_BAUD);
+  Serial.print(",rx=");
+  Serial.print(SIM800L_RX_PIN);
+  Serial.print(",tx=");
+  Serial.println(SIM800L_TX_PIN);
+
+  const String atResponse = transactSim800l("AT", 1200);
+
+  if (atResponse.indexOf("OK") >= 0) {
+    Serial.println("NOPAL:SIM800L_READY");
+
+    transactSim800l("ATE0", 1200);
+    transactSim800l("AT+CMEE=2", 1200);
+  } else {
+    Serial.print("WARN:SIM800L_NO_RESPONSE,response=");
+    Serial.println(atResponse);
+  }
+}
+
+#endif
+
+
+// ============================================================================
+// IDENTIFICACIÓN PARA NOPAL
 // ============================================================================
 
 void sendIdentification() {
-  Serial.print("NOPAL,role=" DEVICE_ROLE);
-  Serial.print(",board=" BOARD_ID);
+  Serial.print("NOPAL,role=");
+  Serial.print(DEVICE_ROLE);
+
   Serial.print(",chip=");
-  Serial.print(ESP.getChipModel());
-  Serial.print(",fw=" FW_VERSION);
+  printChipIdentification();
+
+  Serial.print(",fw=");
+  Serial.print(FW_VERSION);
+
   Serial.print(",relays=");
-  Serial.print(availableRelayCount());
+  Serial.print(RELAY_COUNT);
+
   Serial.print(",pwm_led=");
-  Serial.print(ENABLE_PWM_RGB ? 1 : 0);
+  Serial.print(PWM_LED_ENABLE ? 1 : 0);
+
   Serial.print(",ws2812=");
-  Serial.print(ENABLE_WS2812 ? 1 : 0);
+  Serial.print(WS2812_ENABLE ? 1 : 0);
+
   Serial.print(",ws2812_count=");
-#if ENABLE_WS2812
-  Serial.print(WS2812_COUNT);
-#else
-  Serial.print(0);
-#endif
-  Serial.print(",wifi=1,wifi_connected=");
+  Serial.print(WS2812_ENABLE ? WS2812_COUNT : 0);
+
+  Serial.print(",wifi=1");
+
+  Serial.print(",wifi_connected=");
   Serial.print(WiFi.status() == WL_CONNECTED ? 1 : 0);
+
   Serial.print(",wifi_mode=");
   Serial.print(wifiModeText());
+
   Serial.print(",hostname=");
   Serial.print(NOPAL_HOSTNAME);
+
   Serial.print(",ip=");
   Serial.print(activeIpAddress());
-  Serial.print(",gsm=1,gsm_registered=");
-  Serial.print(gsmRegistered ? 1 : 0);
-  Serial.print(",signal_csq=");
-  Serial.print(signalQuality);
-  Serial.print(",battery_percent=");
-  Serial.print(batteryPercent);
-  Serial.print(",ota=1,ota_path=/update,uptime_ms=");
+
+  Serial.print(",ota=1");
+  Serial.print(",ota_path=/update");
+
+  Serial.print(",sim800l=");
+  Serial.print(SIM800L_ENABLE ? 1 : 0);
+
+  Serial.print(",sim_baud=");
+  Serial.print(SIM800L_BAUD);
+
+  Serial.print(",uptime_ms=");
   Serial.print(millis());
+
   Serial.print(",free_heap=");
   Serial.println(ESP.getFreeHeap());
 }
 
+
 void sendNetworkIdentification() {
   Serial.print("NET,connected=");
   Serial.print(WiFi.status() == WL_CONNECTED ? 1 : 0);
+
   Serial.print(",mode=");
   Serial.print(wifiModeText());
+
   Serial.print(",hostname=");
   Serial.print(NOPAL_HOSTNAME);
+
   Serial.print(",ssid=");
-  if (WiFi.status() == WL_CONNECTED) Serial.print(WiFi.SSID());
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.print(WiFi.SSID());
+  }
+
   Serial.print(",ip=");
   Serial.print(activeIpAddress());
+
   Serial.print(",rssi=");
-  Serial.print(WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0);
+  Serial.print(
+    WiFi.status() == WL_CONNECTED
+      ? WiFi.RSSI()
+      : 0
+  );
+
   Serial.print(",recovery_ap=");
   Serial.print(recoveryApActive ? 1 : 0);
+
   Serial.print(",recovery_ssid=");
-  if (recoveryApActive) Serial.print(recoveryApSsid);
+
+  if (recoveryApActive) {
+    Serial.print(recoveryApSsid);
+  }
+
   Serial.print(",ota_url=http://");
   Serial.print(activeIpAddress());
   Serial.println("/update");
 }
 
-void sendGsmIdentification() {
-  Serial.print("GSM,power=");
-  Serial.print(modemPowerEnabled ? 1 : 0);
-  Serial.print(",responsive=");
-  Serial.print(modemResponsive ? 1 : 0);
-  Serial.print(",initialized=");
-  Serial.print(modemInitialized ? 1 : 0);
-  Serial.print(",sim=");
-  Serial.print(simStatusText());
-  Serial.print(",registered=");
-  Serial.print(gsmRegistered ? 1 : 0);
-  Serial.print(",operator=");
-  Serial.print(operatorName);
-  Serial.print(",signal_csq=");
-  Serial.print(signalQuality);
-  Serial.print(",signal_dbm=");
-  Serial.print(signalDbm());
-  Serial.print(",signal_bars=");
-  Serial.print(signalBars());
-  Serial.print(",gprs=");
-  Serial.print(gprsConnected ? 1 : 0);
-  Serial.print(",ring=");
-  Serial.print(ringDetected ? 1 : 0);
-  Serial.print(",imei=");
-  Serial.print(modemImei);
-  Serial.print(",ccid=");
-  Serial.print(simCcid);
-  Serial.print(",error=");
-  Serial.println(modemLastError);
+
+// ============================================================================
+// PROCESAMIENTO DE RELÉS
+// ============================================================================
+
+bool handleRelayCommand(const String& command) {
+  if (
+    command.length() < 2 ||
+    command.charAt(0) != 'R'
+  ) {
+    return false;
+  }
+
+  if (command.endsWith("?")) {
+    const String relayNumberText =
+      command.substring(1, command.length() - 1);
+
+    const int relayNumber = relayNumberText.toInt();
+    const int relayIndex = relayNumber - 1;
+
+    if (!validRelayIndex(relayIndex)) {
+      Serial.println("ERR:INVALID_RELAY");
+      return true;
+    }
+
+    Serial.println(
+      getRelay(relayIndex)
+        ? "ON"
+        : "OFF"
+    );
+
+    return true;
+  }
+
+  const int colonPosition = command.indexOf(':');
+
+  if (colonPosition <= 1) {
+    return false;
+  }
+
+  const String relayNumberText =
+    command.substring(1, colonPosition);
+
+  const int relayNumber = relayNumberText.toInt();
+  const int relayIndex = relayNumber - 1;
+
+  if (!validRelayIndex(relayIndex)) {
+    Serial.println("ERR:INVALID_RELAY");
+    return true;
+  }
+
+  String action = command.substring(colonPosition + 1);
+  action.trim();
+  action.toUpperCase();
+
+  if (action == "ON") {
+    setRelay(relayIndex, true);
+    Serial.println("OK");
+    return true;
+  }
+
+  if (action == "OFF") {
+    setRelay(relayIndex, false);
+    Serial.println("OK");
+    return true;
+  }
+
+  Serial.println("ERR:INVALID_ACTION");
+
+  return true;
 }
 
-void sendBatteryIdentification() {
-  Serial.print("BAT,ip5306=");
-  Serial.print(ip5306Online ? 1 : 0);
-  Serial.print(",boost_keep_on=");
-  Serial.print(boostKeepOnEnabled ? 1 : 0);
-  Serial.print(",percent=");
-  Serial.println(batteryPercent);
+
+// ============================================================================
+// PROCESAMIENTO DE SIM800L
+// ============================================================================
+
+bool handleSim800lCommand(const String& command) {
+  if (!command.startsWith("SIM:")) {
+    return false;
+  }
+
+#if SIM800L_ENABLE
+
+  if (command == "SIM:AT") {
+    printSimTransaction("AT");
+    return true;
+  }
+
+  if (command == "SIM:INFO?") {
+    printSimTransaction("ATI");
+    return true;
+  }
+
+  if (command == "SIM:CSQ?") {
+    printSimTransaction("AT+CSQ");
+    return true;
+  }
+
+  if (command == "SIM:CREG?") {
+    printSimTransaction("AT+CREG?");
+    return true;
+  }
+
+  if (command == "SIM:CCID?") {
+    printSimTransaction("AT+CCID");
+    return true;
+  }
+
+  if (command == "SIM:IMEI?") {
+    printSimTransaction("AT+GSN");
+    return true;
+  }
+
+  if (command == "SIM:OPERATOR?") {
+    printSimTransaction("AT+COPS?");
+    return true;
+  }
+
+  if (command.startsWith("SIM:RAW:")) {
+    String rawCommand = command.substring(8);
+    rawCommand.trim();
+
+    if (
+      !rawCommand.startsWith("AT") ||
+      rawCommand.length() > 100
+    ) {
+      Serial.println("ERR:INVALID_AT_COMMAND");
+      return true;
+    }
+
+    printSimTransaction(rawCommand);
+    return true;
+  }
+
+  Serial.println("ERR:UNKNOWN_SIM_COMMAND");
+  return true;
+
+#else
+
+  Serial.println("ERR:SIM800L_DISABLED_ON_THIS_BUILD");
+  return true;
+
+#endif
 }
 
-void sendHelp() {
-  Serial.println("COMMANDS:ID?,NET?,GSM?,BAT?,MODEM:RESTART,SMS:<phone>|<message>,R<n>:ON,R<n>:OFF,R<n>?,LED:r,g,b,WS:r,g,b");
-}
+
+// ============================================================================
+// PROCESAMIENTO DE COMANDOS NOPAL
+// ============================================================================
 
 void handleCommand(String line) {
   line.trim();
@@ -1420,139 +1585,117 @@ void handleCommand(String line) {
     return;
   }
 
-  if (command == "GSM?" || command == "MODEM?") {
-    sendGsmIdentification();
+  if (handleRelayCommand(command)) {
     return;
   }
 
-  if (command == "BAT?") {
-    sendBatteryIdentification();
+  if (handleSim800lCommand(command)) {
     return;
   }
 
-  if (command == "HELP?") {
-    sendHelp();
-    return;
-  }
+#if WS2812_ENABLE
 
-  if (command == "MODEM:RESTART") {
-    hardwareRestartModem();
+  if (command.startsWith("WS:")) {
+    int red;
+    int green;
+    int blue;
+
+    const int parsedValues = sscanf(
+      command.c_str() + 3,
+      "%d,%d,%d",
+      &red,
+      &green,
+      &blue
+    );
+
+    if (parsedValues != 3) {
+      Serial.println("ERR:INVALID_RGB");
+      return;
+    }
+
+    setWs2812Color(
+      clampColor(red),
+      clampColor(green),
+      clampColor(blue)
+    );
+
     Serial.println("OK");
     return;
   }
 
-  if (command.startsWith("SMS:")) {
-    const String payload = command.substring(4);
-    const int separator = payload.indexOf('|');
-
-    if (separator <= 0) {
-      Serial.println("ERR:SMS_FORMAT_USE_PHONE_PIPE_MESSAGE");
-      return;
-    }
-
-    const String phone = payload.substring(0, separator);
-    const String message = payload.substring(separator + 1);
-    String error;
-
-    if (sendSms(phone, message, error)) {
-      Serial.println("OK");
-    } else {
-      Serial.print("ERR:");
-      Serial.println(error);
-    }
-    return;
-  }
-
-  {
-    String response;
-    if (handleRelayCommand(command, response)) {
-      Serial.println(response);
-      return;
-    }
-  }
-
-#if ENABLE_PWM_RGB
-  if (command.startsWith("LED:")) {
-    String response;
-    parseAndSetColor(command, 4, setPwmLedColor, response);
-    Serial.println(response);
-    return;
-  }
-#endif
-
-#if ENABLE_WS2812
-  if (command.startsWith("WS:")) {
-    String response;
-    parseAndSetColor(command, 3, setWs2812Color, response);
-    Serial.println(response);
-    return;
-  }
 #endif
 
   Serial.println("ERR:UNKNOWN_COMMAND");
 }
 
-// ============================================================================
-// SETUP Y LOOP
-// ============================================================================
 
-String inputLine;
+// ============================================================================
+// SETUP
+// ============================================================================
 
 void setup() {
   Serial.begin(115200);
-  delay(50);
-  inputLine.reserve(SERIAL_LINE_MAX + 1);
+  inputLine.reserve(160);
 
-  pinMode(STATUS_LED_PIN, OUTPUT);
-  setStatusLed(false);
-
-  Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
-
-  if (setupIp5306()) {
-    Serial.println("NOPAL:IP5306_READY,boost_keep_on=1");
-  } else {
-    Serial.println("WARN:IP5306_NOT_RESPONDING");
+  for (uint8_t index = 0; index < RELAY_COUNT; index++) {
+    pinMode(RELAY_PINS[index], OUTPUT);
+    setRelay(index, false);
   }
 
-  setupRelayExpander();
   setupPwmLed();
   setPwmLedColor(0, 0, 0);
-  setupWs2812();
-  setWs2812Color(0, 0, 0);
 
-  setupModemHardware();
+#if WS2812_ENABLE
+
+  strip.begin();
+  strip.clear();
+  strip.show();
+
+#endif
+
+#if SIM800L_ENABLE
+
+  setupSim800l();
+
+#endif
+
   setupWifi();
   setupWebServer();
-  serviceBattery();
+
+  delay(100);
 
   Serial.println("NOPAL:READY");
-  sendIdentification();
 }
+
+
+// ============================================================================
+// LOOP
+// ============================================================================
 
 void loop() {
   serviceNetwork();
-  serviceModem();
-  serviceBattery();
-  serviceStatusLed();
 
   while (Serial.available() > 0) {
-    const char c = static_cast<char>(Serial.read());
+    const char receivedCharacter =
+      static_cast<char>(Serial.read());
 
-    if (c == '\n') {
+    if (receivedCharacter == '\n') {
       inputLine.trim();
+
       if (inputLine.length() > 0) {
         handleCommand(inputLine);
       }
+
       inputLine = "";
-    } else if (c != '\r') {
-      if (inputLine.length() < SERIAL_LINE_MAX) {
-        inputLine += c;
+
+    } else if (receivedCharacter != '\r') {
+
+      if (inputLine.length() < 159) {
+        inputLine += receivedCharacter;
       } else {
         inputLine = "";
         Serial.println("ERR:LINE_TOO_LONG");
       }
     }
   }
-
-  delay(2);
 }

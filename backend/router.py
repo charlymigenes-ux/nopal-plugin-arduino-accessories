@@ -443,20 +443,37 @@ async def accessory_scenes_list_endpoint(user: dict = Depends(require_auth)):
     return {"scenes": accessory_scenes.get_scenes()}
 
 
+def _parse_scene_payload(actions: Optional[str], variants: Optional[str]):
+    """`actions` (modo normal): JSON, lista de {"accessory_id", "on"} o
+    {"accessory_id", "color": [r, g, b]}. `variants` (modo toggle/cycle):
+    JSON, lista de {"name", "actions": [...]}. Solo uno de los dos aplica
+    según `mode` -- accessory_scenes valida cuál hace falta."""
+    actions_list = None
+    if actions:
+        try:
+            actions_list = json.loads(actions)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="El campo 'actions' no es un JSON válido")
+    variants_list = None
+    if variants:
+        try:
+            variants_list = json.loads(variants)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="El campo 'variants' no es un JSON válido")
+    return actions_list, variants_list
+
+
 @router.post("/api/accessories/scenes")
 async def accessory_scenes_create_endpoint(
     name: str = Form(...),
-    actions: str = Form(...),
+    mode: str = Form("normal"),
+    actions: Optional[str] = Form(None),
+    variants: Optional[str] = Form(None),
     user: dict = Depends(require_role("admin")),
 ):
-    """`actions` es un JSON: lista de {"accessory_id", "on"} o
-    {"accessory_id", "color": [r, g, b]}."""
+    actions_list, variants_list = _parse_scene_payload(actions, variants)
     try:
-        actions_list = json.loads(actions)
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="El campo 'actions' no es un JSON válido")
-    try:
-        scene = accessory_scenes.create_scene(name, actions_list)
+        scene = accessory_scenes.create_scene(name, mode=mode, actions=actions_list, variants=variants_list)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return scene
@@ -466,16 +483,15 @@ async def accessory_scenes_create_endpoint(
 async def accessory_scenes_update_endpoint(
     scene_id: str,
     name: str = Form(...),
-    actions: str = Form(...),
+    mode: str = Form("normal"),
+    actions: Optional[str] = Form(None),
+    variants: Optional[str] = Form(None),
     user: dict = Depends(require_role("admin")),
 ):
     """Igual que el POST de creación pero sobre una escena existente."""
+    actions_list, variants_list = _parse_scene_payload(actions, variants)
     try:
-        actions_list = json.loads(actions)
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="El campo 'actions' no es un JSON válido")
-    try:
-        scene = accessory_scenes.update_scene(scene_id, name, actions_list)
+        scene = accessory_scenes.update_scene(scene_id, name, mode=mode, actions=actions_list, variants=variants_list)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except KeyError:

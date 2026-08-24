@@ -1,6 +1,6 @@
 (() => {
     const PLUGIN_ID = 'arduino-accessories';
-    const PLUGIN_VERSION = '2.5.2';
+    const PLUGIN_VERSION = '2.6.0';
     if (window.NopalPluginRegistry?.[PLUGIN_ID]) return;
 
     // Mismo patrón que font-library.js/svg-toolkit.js/spoolman.js/matriz-led.js:
@@ -8,11 +8,40 @@
     // plugins), lee el idioma ya elegido en Configuración (localStorage.language).
     // Va primero en el archivo porque PIN_CATEGORIES/buildEsp32Pins/
     // buildEsp8266Pins/buildTCallPins/BOARD_CATALOG/MACHINES/GLOBAL_RULES/
-    // ACTIVITY_LOG/SYSTEM_STATS/SUBVIEWS (todos mock, ver banner de datos
+    // ACTIVITY_LOG/SYSTEM_STATS (todos mock, ver banner de datos
     // mock más abajo) llaman tr() al definirse -- una vez, al cargar el
     // script, igual que ya hacía matriz-led con sus constantes.
 const I18N = {
     es: {
+        headerSubtitle: 'gestión de placas, pines y automatizaciones', scanBtn: 'Escanear', backToPanel: 'Volver al panel',
+        connectedBoardsLabel: 'Placas conectadas', withWarningLabel: 'Con advertencia', totalRelaysLabel: 'Relés totales',
+        totalLedsLabel: 'LEDs totales', freePinsLabel: 'Pines libres', networkUptimeLabel: 'Uptime red', wifiHealthLabel: 'WiFi (salud)',
+        connectedBoardsTitle: 'Placas conectadas', withWarningCount: '{count} con advertencia',
+        sortLabel: 'Orden:', sortByName: 'Nombre', sortByStatus: 'Estado', sortBySignal: 'Señal', toggleViewTitle: 'Cambiar vista',
+        boardStatusWarning: 'Advertencia', boardStatusOnline: 'Online', boardStatusOffline: 'Sin conexión',
+        editBtn: 'Editar', duplicateBtn: 'Duplicar',
+        quickViewTitle: 'Vista rápida de la placa seleccionada', quickTabSummary: 'Resumen de pines', quickTabFree: 'Libres',
+        noFreePinsLabel: 'Esta placa no tiene pines libres.', restartBoardBtn: 'Reiniciar placa', viewFullMapBtn: 'Ver mapa completo',
+        quickActionsAutomationsTitle: 'Acciones rápidas y automatizaciones', quickActionsSubtitle: 'Acciones rápidas',
+        testRelaysBtn: 'Probar relés', testLedsBtn: 'Probar LEDs', syncBtn: 'Sincronizar',
+        recentScenesTitle: 'Escenas activas', viewAllBtn: 'Ver todas', noScenesRunYet: 'Todavía no se ejecutó ninguna escena.',
+        lastRunLabel: 'Ejecutada',
+        resourcesTitle: 'Recursos y ayuda',
+        resQuickGuideTitle: 'Guía rápida', resQuickGuideSub: 'Primeros pasos',
+        resApiTitle: 'HTTP / API', resApiSub: 'Endpoints disponibles',
+        resHaTitle: 'Home Assistant', resHaSub: 'Integración y entidades',
+        resFirmwareTitle: 'Firmware NOPAL', resFirmwareSub: 'Versiones y cambios',
+        resDiagnosticsTitle: 'Diagnóstico', resDiagnosticsSub: 'Herramientas de red',
+        warnReasonPins: 'Hay pines con función duplicada en el mapa de esta placa.', warnReasonSignal: 'Señal WiFi débil (RSSI muy bajo).',
+        boardConnectionOk: '{name} respondió correctamente.', boardConnectionFailed: 'No se pudo confirmar la conexión de {name}.',
+        noRelaysToTest: 'Esta placa no tiene relés registrados para probar.', noLedsToTest: 'Esta placa no tiene tiras/LEDs registrados para probar.',
+        testingRelays: 'Probando {count} relé(s)…', testingLeds: 'Probando {count} tira(s)/LED(s)…',
+        duplicatedBoardName: '{name} (copia)', syncStarted: 'Sincronizando datos del taller…',
+        allScenesTitle: 'Todas las escenas', allScenesDesc: 'Ejecutá, editá o creá escenas y macros del taller.',
+        diagnosticsResult: 'Diagnóstico: {online}/{total} placas en línea, {warnings} con advertencia.',
+        docsHaTitle: 'Home Assistant', docsHaBody: 'No hay un plugin dedicado -- usá la plataforma RESTful/command_line de Home Assistant contra estos endpoints reales del panel:',
+        docsHaStatus: 'Estado de todos los accesorios registrados', docsHaPower: 'Encender/apagar un relé (id, on=true|false)',
+        docsHaLed: 'Fijar color de una tira LED (id, r, g, b)', docsHaScene: 'Ejecutar una escena guardada',
         catPower: 'Alimentación', catGround: 'Tierra', catReserved: 'Reservado', catFree: 'Libre',
         catLedWs2812: 'Tira LED WS2812', catLedPwm: 'LED PWM analógico', catRelay: 'Relé',
         catSensorTemp: 'Sensor de temperatura', catSensorSmoke: 'Sensor de humo', catSensorDoor: 'Sensor de puerta',
@@ -223,8 +252,16 @@ const I18N = {
         errCouldNotOpenFirmwareUpdater: 'No se pudo abrir el actualizador de firmware.',
         ruleEditorComingSoon: 'Editor de reglas: próximamente.',
         sceneApplied: 'Escena "{name}" aplicada.', errCouldNotRunScene: 'No se pudo ejecutar la escena.',
+        sceneAppliedState: '"{name}": {state}.',
         needAccessoryForScene: 'Registra al menos un accesorio (relé o LED) antes de crear una escena.',
         sceneNeedsAction: 'La escena necesita al menos una acción.',
+        sceneNeedsTwoStates: 'El modo doble/múltiple necesita al menos 2 estados.',
+        sceneModeLabel: 'Modo de la escena',
+        modeNormalLabel: 'Normal', modeNormalHint: 'Cada ejecución hace siempre lo mismo.',
+        modeToggleLabel: 'Doble', modeToggleHint: 'Alterna entre 2 estados con cada clic, como un interruptor.',
+        modeCycleLabel: 'Múltiple', modeCycleHint: 'Va rotando entre 3 o más estados, en orden.',
+        stateNamePlaceholder: 'Ej. Encendido', removeStateTitle: 'Quitar estado', addStateBtn: 'Agregar estado',
+        stateOnDefault: 'Encendido', stateOffDefault: 'Apagado', stateDefaultName: 'Estado {number}',
         sceneDeleted: 'Escena eliminada.', errCouldNotDeleteScene: 'No se pudo eliminar la escena.',
         sceneUpdated: 'Escena actualizada.', sceneCreated: 'Escena creada.', errCouldNotSaveScene: 'No se pudo guardar la escena.',
         nameWord: 'Nombre', ledModeLabel: 'Modo LED', protocolLabel: 'Protocolo', otaUserLabel: 'Usuario OTA',
@@ -266,6 +303,35 @@ const I18N = {
         usbBoardName: 'Placa USB ({device})', wifiBoardName: 'Placa WiFi ({host})',
     },
     en: {
+        headerSubtitle: 'boards, pins and automations management', scanBtn: 'Scan', backToPanel: 'Back to panel',
+        connectedBoardsLabel: 'Connected boards', withWarningLabel: 'With warning', totalRelaysLabel: 'Total relays',
+        totalLedsLabel: 'Total LEDs', freePinsLabel: 'Free pins', networkUptimeLabel: 'Network uptime', wifiHealthLabel: 'WiFi (health)',
+        connectedBoardsTitle: 'Connected boards', withWarningCount: '{count} with warning',
+        sortLabel: 'Sort:', sortByName: 'Name', sortByStatus: 'Status', sortBySignal: 'Signal', toggleViewTitle: 'Toggle view',
+        boardStatusWarning: 'Warning', boardStatusOnline: 'Online', boardStatusOffline: 'Offline',
+        editBtn: 'Edit', duplicateBtn: 'Duplicate',
+        quickViewTitle: 'Quick view of the selected board', quickTabSummary: 'Pin summary', quickTabFree: 'Free',
+        noFreePinsLabel: 'This board has no free pins.', restartBoardBtn: 'Restart board', viewFullMapBtn: 'View full map',
+        quickActionsAutomationsTitle: 'Quick actions & automations', quickActionsSubtitle: 'Quick actions',
+        testRelaysBtn: 'Test relays', testLedsBtn: 'Test LEDs', syncBtn: 'Sync',
+        recentScenesTitle: 'Active scenes', viewAllBtn: 'View all', noScenesRunYet: 'No scene has run yet.',
+        lastRunLabel: 'Run',
+        resourcesTitle: 'Resources & help',
+        resQuickGuideTitle: 'Quick guide', resQuickGuideSub: 'Getting started',
+        resApiTitle: 'HTTP / API', resApiSub: 'Available endpoints',
+        resHaTitle: 'Home Assistant', resHaSub: 'Integration & entities',
+        resFirmwareTitle: 'NOPAL firmware', resFirmwareSub: 'Versions & changes',
+        resDiagnosticsTitle: 'Diagnostics', resDiagnosticsSub: 'Network tools',
+        warnReasonPins: 'This board has pins with a duplicate function on the pin map.', warnReasonSignal: 'Weak WiFi signal (very low RSSI).',
+        boardConnectionOk: '{name} responded correctly.', boardConnectionFailed: 'Could not confirm the connection to {name}.',
+        noRelaysToTest: 'This board has no registered relays to test.', noLedsToTest: 'This board has no registered strips/LEDs to test.',
+        testingRelays: 'Testing {count} relay(s)…', testingLeds: 'Testing {count} strip(s)/LED(s)…',
+        duplicatedBoardName: '{name} (copy)', syncStarted: 'Syncing workshop data…',
+        allScenesTitle: 'All scenes', allScenesDesc: 'Run, edit or create workshop scenes and macros.',
+        diagnosticsResult: 'Diagnostics: {online}/{total} boards online, {warnings} with warning.',
+        docsHaTitle: 'Home Assistant', docsHaBody: 'There is no dedicated plugin -- use Home Assistant\'s RESTful/command_line platform against these real panel endpoints:',
+        docsHaStatus: 'Status of every registered accessory', docsHaPower: 'Turn a relay on/off (id, on=true|false)',
+        docsHaLed: 'Set an LED strip color (id, r, g, b)', docsHaScene: 'Run a saved scene',
         catPower: 'Power', catGround: 'Ground', catReserved: 'Reserved', catFree: 'Free',
         catLedWs2812: 'WS2812 LED strip', catLedPwm: 'Analog PWM LED', catRelay: 'Relay',
         catSensorTemp: 'Temperature sensor', catSensorSmoke: 'Smoke sensor', catSensorDoor: 'Door sensor',
@@ -476,8 +542,16 @@ const I18N = {
         errCouldNotOpenFirmwareUpdater: 'Could not open the firmware updater.',
         ruleEditorComingSoon: 'Rule editor: coming soon.',
         sceneApplied: 'Scene "{name}" applied.', errCouldNotRunScene: 'Could not run the scene.',
+        sceneAppliedState: '"{name}": {state}.',
         needAccessoryForScene: 'Register at least one accessory (relay or LED) before creating a scene.',
         sceneNeedsAction: 'The scene needs at least one action.',
+        sceneNeedsTwoStates: 'Toggle/cycle mode needs at least 2 states.',
+        sceneModeLabel: 'Scene mode',
+        modeNormalLabel: 'Normal', modeNormalHint: 'Every run always does the same thing.',
+        modeToggleLabel: 'Toggle', modeToggleHint: 'Alternates between 2 states on each click, like a switch.',
+        modeCycleLabel: 'Cycle', modeCycleHint: 'Rotates through 3 or more states, in order.',
+        stateNamePlaceholder: 'E.g. On', removeStateTitle: 'Remove state', addStateBtn: 'Add state',
+        stateOnDefault: 'On', stateOffDefault: 'Off', stateDefaultName: 'State {number}',
         sceneDeleted: 'Scene deleted.', errCouldNotDeleteScene: 'Could not delete the scene.',
         sceneUpdated: 'Scene updated.', sceneCreated: 'Scene created.', errCouldNotSaveScene: 'Could not save the scene.',
         nameWord: 'Name', ledModeLabel: 'LED mode', protocolLabel: 'Protocol', otaUserLabel: 'OTA username',
@@ -729,8 +803,16 @@ const I18N = {
         errCouldNotOpenFirmwareUpdater: 'Der Firmware-Updater konnte nicht geöffnet werden.',
         ruleEditorComingSoon: 'Regeleditor: demnächst verfügbar.',
         sceneApplied: 'Szene "{name}" angewendet.', errCouldNotRunScene: 'Die Szene konnte nicht ausgeführt werden.',
+        sceneAppliedState: '"{name}": {state}.',
         needAccessoryForScene: 'Registriere mindestens ein Zubehör (Relais oder LED), bevor du eine Szene erstellst.',
         sceneNeedsAction: 'Die Szene benötigt mindestens eine Aktion.',
+        sceneNeedsTwoStates: 'Der Umschalt-/Zyklusmodus braucht mindestens 2 Zustände.',
+        sceneModeLabel: 'Szenenmodus',
+        modeNormalLabel: 'Normal', modeNormalHint: 'Jede Ausführung macht immer dasselbe.',
+        modeToggleLabel: 'Umschalten', modeToggleHint: 'Wechselt bei jedem Klick zwischen 2 Zuständen, wie ein Schalter.',
+        modeCycleLabel: 'Zyklus', modeCycleHint: 'Rotiert der Reihe nach durch 3 oder mehr Zustände.',
+        stateNamePlaceholder: 'Z.B. Ein', removeStateTitle: 'Zustand entfernen', addStateBtn: 'Zustand hinzufügen',
+        stateOnDefault: 'Ein', stateOffDefault: 'Aus', stateDefaultName: 'Zustand {number}',
         sceneDeleted: 'Szene gelöscht.', errCouldNotDeleteScene: 'Die Szene konnte nicht gelöscht werden.',
         sceneUpdated: 'Szene aktualisiert.', sceneCreated: 'Szene erstellt.', errCouldNotSaveScene: 'Die Szene konnte nicht gespeichert werden.',
         nameWord: 'Name', ledModeLabel: 'LED-Modus', protocolLabel: 'Protokoll', otaUserLabel: 'OTA-Benutzer',
@@ -982,8 +1064,16 @@ const I18N = {
         errCouldNotOpenFirmwareUpdater: 'Impossible d\'ouvrir le programme de mise à jour du firmware.',
         ruleEditorComingSoon: 'Éditeur de règles : bientôt disponible.',
         sceneApplied: 'Scène "{name}" appliquée.', errCouldNotRunScene: 'Impossible d\'exécuter la scène.',
+        sceneAppliedState: '"{name}" : {state}.',
         needAccessoryForScene: 'Enregistrez au moins un accessoire (relais ou LED) avant de créer une scène.',
         sceneNeedsAction: 'La scène nécessite au moins une action.',
+        sceneNeedsTwoStates: 'Le mode double/multiple nécessite au moins 2 états.',
+        sceneModeLabel: 'Mode de la scène',
+        modeNormalLabel: 'Normal', modeNormalHint: 'Chaque exécution fait toujours la même chose.',
+        modeToggleLabel: 'Double', modeToggleHint: 'Alterne entre 2 états à chaque clic, comme un interrupteur.',
+        modeCycleLabel: 'Multiple', modeCycleHint: 'Tourne entre 3 états ou plus, dans l\'ordre.',
+        stateNamePlaceholder: 'Ex. Allumé', removeStateTitle: 'Supprimer l\'état', addStateBtn: 'Ajouter un état',
+        stateOnDefault: 'Allumé', stateOffDefault: 'Éteint', stateDefaultName: 'État {number}',
         sceneDeleted: 'Scène supprimée.', errCouldNotDeleteScene: 'Impossible de supprimer la scène.',
         sceneUpdated: 'Scène mise à jour.', sceneCreated: 'Scène créée.', errCouldNotSaveScene: 'Impossible d\'enregistrer la scène.',
         nameWord: 'Nom', ledModeLabel: 'Mode LED', protocolLabel: 'Protocole', otaUserLabel: 'Utilisateur OTA',
@@ -1235,8 +1325,16 @@ const I18N = {
         errCouldNotOpenFirmwareUpdater: 'Não foi possível abrir o atualizador de firmware.',
         ruleEditorComingSoon: 'Editor de regras: em breve.',
         sceneApplied: 'Cena "{name}" aplicada.', errCouldNotRunScene: 'Não foi possível executar a cena.',
+        sceneAppliedState: '"{name}": {state}.',
         needAccessoryForScene: 'Registre pelo menos um acessório (relé ou LED) antes de criar uma cena.',
         sceneNeedsAction: 'A cena precisa de pelo menos uma ação.',
+        sceneNeedsTwoStates: 'O modo duplo/múltiplo precisa de pelo menos 2 estados.',
+        sceneModeLabel: 'Modo da cena',
+        modeNormalLabel: 'Normal', modeNormalHint: 'Cada execução sempre faz a mesma coisa.',
+        modeToggleLabel: 'Duplo', modeToggleHint: 'Alterna entre 2 estados a cada clique, como um interruptor.',
+        modeCycleLabel: 'Múltiplo', modeCycleHint: 'Roda entre 3 ou mais estados, em ordem.',
+        stateNamePlaceholder: 'Ex. Ligado', removeStateTitle: 'Remover estado', addStateBtn: 'Adicionar estado',
+        stateOnDefault: 'Ligado', stateOffDefault: 'Desligado', stateDefaultName: 'Estado {number}',
         sceneDeleted: 'Cena excluída.', errCouldNotDeleteScene: 'Não foi possível excluir a cena.',
         sceneUpdated: 'Cena atualizada.', sceneCreated: 'Cena criada.', errCouldNotSaveScene: 'Não foi possível salvar a cena.',
         nameWord: 'Nome', ledModeLabel: 'Modo LED', protocolLabel: 'Protocolo', otaUserLabel: 'Usuário OTA',
@@ -1619,8 +1717,9 @@ const I18N = {
         selectedPinKey: null, // "left:8" | "right:3"
         pendingCategory: null, // categoría elegida en el dropdown del inspector, todavía sin "Aplicar" -- ver applyPinConfig()
         rules: GLOBAL_RULES.map(rule => ({ ...rule })),
-        profile: { name: tr('domoticWorkshopName'), version: 'v1.0.2' },
         scanning: false, // "Escanear pines" -- ver scanPins()
+        boardsSort: 'name', // name | status | signal -- orden del grid de tarjetas, solo cliente
+        boardsViewMode: 'grid', // grid | list -- solo cliente, no persistido
         // Asistente de primer uso -- a diferencia de casi todo lo demás en
         // este archivo, esto SÍ habla con el backend real (discover/
         // list-ports/firmware/*, los mismos endpoints que ya usaba el panel
@@ -1666,6 +1765,13 @@ const I18N = {
     const ICON_FOLDER = '<path d="M4 4h6l2 3h8a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Z"/>';
     const ICON_BOOK = '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V5H6.5A2.5 2.5 0 0 0 4 7.5z"/><path d="M12 5v12"/>';
     const ICON_MORE = '<circle cx="12" cy="5" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1.6" fill="currentColor" stroke="none"/>';
+    const ICON_WARNING = '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>';
+    const ICON_WIFI = '<path d="M5 13a10 10 0 0 1 14 0"/><path d="M8.5 16.5a5 5 0 0 1 7 0"/><path d="M12 20h.01"/>';
+    const ICON_CLOCK = '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>';
+    const ICON_SORT = '<path d="M3 6h18M6 12h12M10 18h4"/>';
+    const ICON_LIST = '<path d="M8 6h13M8 12h13M8 18h13"/><path d="M3 6h.01M3 12h.01M3 18h.01"/>';
+    const ICON_REFRESH = '<path d="M3 12a9 9 0 0 1 15.3-6.4L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.3 6.4L3 16"/><path d="M3 21v-5h5"/>';
+    const ICON_COPY = '<rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16V4a2 2 0 0 1 2-2h10"/>';
 
     // ============================================================================
     // AUXILIARES
@@ -1947,8 +2053,14 @@ const I18N = {
         const scene = state.scenes.find(item => item.id === sceneId);
         try {
             await api(`/api/accessories/scenes/${encodeURIComponent(sceneId)}/run`, { method: 'POST' });
-            toast(tr('sceneApplied', { name: scene?.name || tr('workshopWord') }));
             await loadWorkshopData({ quiet: true });
+            // Doble/múltiple: el estado activo cambió con esta corrida --
+            // se lee de nuevo (loadWorkshopData ya trajo el dato fresco)
+            // para avisar A CUÁL quedó, no solo que "se aplicó algo".
+            const updated = state.scenes.find(item => item.id === sceneId);
+            toast(updated?.current_state_name
+                ? tr('sceneAppliedState', { name: updated.name, state: updated.current_state_name })
+                : tr('sceneApplied', { name: scene?.name || tr('workshopWord') }));
         } catch (error) {
             toast(error.message || tr('errCouldNotRunScene'), 'error');
         }
@@ -1972,6 +2084,40 @@ const I18N = {
         </div>`;
     }
 
+    // Lee las filas de acción de CUALQUIER lista (la única del modo normal,
+    // o la de un estado puntual en modo doble/múltiple) -- mismo shape que
+    // ya valida accessory_scenes.py.
+    function parseActionRows(listEl) {
+        return [...listEl.querySelectorAll('[data-scene-action-row]')].map(row => {
+            const accessoryId = row.querySelector('[data-scene-action-accessory]').value;
+            const type = row.querySelector('[data-scene-action-type]').value;
+            if (type === 'color') {
+                return { accessory_id: accessoryId, color: hexToRgb(row.querySelector('[data-scene-action-color]').value) || [0, 0, 0] };
+            }
+            return { accessory_id: accessoryId, on: type === 'on' };
+        });
+    }
+
+    // Un "estado" del modo doble/múltiple: nombre + su propia lista de
+    // acciones -- doble siempre tiene 2 (no removibles, sin botón de
+    // agregar), múltiple tiene 2 o más (agregar/quitar estados enteros).
+    function sceneVariantBlockHtml(variant, index, accessories, removable) {
+        const rowsActions = variant.actions?.length ? variant.actions : [{ accessory_id: accessories[0].id, on: true }];
+        return `<div class="wsa-scene-variant" data-scene-variant>
+            <div class="wsa-scene-variant-header">
+                <input type="text" data-scene-variant-name value="${esc(variant.name || '')}" placeholder="${esc(tr('stateNamePlaceholder'))}" maxlength="40">
+                ${removable ? `<button type="button" class="wsa-card-menu-btn wsa-btn-icon-danger" data-scene-variant-remove title="${tr('removeStateTitle')}">${icon(ICON_CLOSE, 14)}</button>` : ''}
+            </div>
+            <div class="wsa-scene-actions" data-scene-variant-actions>${rowsActions.map(action => sceneActionRowHtml(action, accessories)).join('')}</div>
+            <button type="button" class="wsa-btn wsa-btn-small" data-scene-variant-add-action>${icon(ICON_PLUS, 13)}<span>${tr('addActionBtn')}</span></button>
+        </div>`;
+    }
+
+    const SCENE_DEFAULT_VARIANTS = accessories => [
+        { name: tr('stateOnDefault'), actions: [{ accessory_id: accessories[0].id, on: true }] },
+        { name: tr('stateOffDefault'), actions: [{ accessory_id: accessories[0].id, on: false }] },
+    ];
+
     function openSceneEditor(sceneId = null) {
         root.querySelector('#wsa-scene-modal')?.remove();
         const scene = sceneId ? state.scenes.find(item => item.id === sceneId) : null;
@@ -1980,14 +2126,33 @@ const I18N = {
             toast(tr('needAccessoryForScene'), 'error');
             return;
         }
+        const mode = scene?.mode || 'normal';
         const actions = scene?.actions?.length ? scene.actions : [{ accessory_id: accessories[0].id, on: true }];
+        const variants = (mode !== 'normal' && scene?.variants?.length) ? scene.variants : SCENE_DEFAULT_VARIANTS(accessories);
+
         root.insertAdjacentHTML('beforeend', `<div class="wsa-lighting-modal" id="wsa-scene-modal"><div class="wsa-lighting-backdrop" data-wsa-scene-close></div>
-            <form class="wsa-lighting-dialog" id="wsa-scene-form">
+            <form class="wsa-lighting-dialog wsa-scene-dialog" id="wsa-scene-form">
                 <button type="button" class="wsa-lighting-close" data-wsa-scene-close>×</button>
                 <div class="wsa-lighting-heading">${icon(ICON_SCENE, 24)}<div><small>${tr('workshopMacroEyebrow')}</small><h2>${scene ? tr('editSceneTitle') : tr('newSceneWord')}</h2><p>${tr('sceneEditorHint')}</p></div></div>
                 <label><span>${tr('nameWord')}</span><input id="wsa-scene-name" required maxlength="60" value="${esc(scene?.name || '')}" placeholder="Ej. Taller ON"></label>
-                <div class="wsa-scene-actions" id="wsa-scene-actions">${actions.map(action => sceneActionRowHtml(action, accessories)).join('')}</div>
-                <button type="button" class="wsa-btn wsa-btn-small" id="wsa-scene-add-action">${icon(ICON_PLUS, 13)}<span>${tr('addActionBtn')}</span></button>
+
+                <div class="wsa-scene-mode-field">
+                    <span class="wsa-scene-mode-label">${tr('sceneModeLabel')}</span>
+                    <label class="wsa-wizard-radio-row"><input type="radio" name="wsa-scene-mode" value="normal" ${mode === 'normal' ? 'checked' : ''}><span><strong>${tr('modeNormalLabel')}</strong><small>${tr('modeNormalHint')}</small></span></label>
+                    <label class="wsa-wizard-radio-row"><input type="radio" name="wsa-scene-mode" value="toggle" ${mode === 'toggle' ? 'checked' : ''}><span><strong>${tr('modeToggleLabel')}</strong><small>${tr('modeToggleHint')}</small></span></label>
+                    <label class="wsa-wizard-radio-row"><input type="radio" name="wsa-scene-mode" value="cycle" ${mode === 'cycle' ? 'checked' : ''}><span><strong>${tr('modeCycleLabel')}</strong><small>${tr('modeCycleHint')}</small></span></label>
+                </div>
+
+                <div id="wsa-scene-normal-block" ${mode === 'normal' ? '' : 'hidden'}>
+                    <div class="wsa-scene-actions" id="wsa-scene-actions">${actions.map(action => sceneActionRowHtml(action, accessories)).join('')}</div>
+                    <button type="button" class="wsa-btn wsa-btn-small" id="wsa-scene-add-action">${icon(ICON_PLUS, 13)}<span>${tr('addActionBtn')}</span></button>
+                </div>
+
+                <div id="wsa-scene-variants-block" ${mode === 'normal' ? 'hidden' : ''}>
+                    <div id="wsa-scene-variants-list">${variants.map((v, i) => sceneVariantBlockHtml(v, i, accessories, mode === 'cycle' && variants.length > 2)).join('')}</div>
+                    <button type="button" class="wsa-btn wsa-btn-small" id="wsa-scene-add-variant" ${mode === 'toggle' ? 'hidden' : ''}>${icon(ICON_PLUS, 13)}<span>${tr('addStateBtn')}</span></button>
+                </div>
+
                 <div class="wsa-lighting-actions">
                     ${scene ? `<button type="button" class="wsa-btn wsa-btn-icon-danger" id="wsa-scene-delete" style="width:auto;padding:9px 14px;margin-right:auto;">${icon(ICON_CLOSE, 14)}<span>${tr('deleteTitle')}</span></button>` : ''}
                     <button type="button" class="wsa-btn" data-wsa-scene-close>${tr('cancelBtn')}</button>
@@ -1995,30 +2160,82 @@ const I18N = {
                 </div>
             </form></div>`);
 
-        const actionsList = root.querySelector('#wsa-scene-actions');
-
         const syncRowType = row => {
             const type = row.querySelector('[data-scene-action-type]').value;
             row.querySelector('[data-scene-action-color]').hidden = type !== 'color';
         };
 
-        const wireRow = row => {
+        // `listEl` explícito (no una lista fija por closure): el modo normal
+        // tiene UNA lista de acciones, el modo doble/múltiple tiene una POR
+        // estado -- la misma fila/lógica sirve para las dos, reusada.
+        const wireActionRow = (row, listEl) => {
             row.querySelector('[data-scene-action-type]').addEventListener('change', () => syncRowType(row));
             row.querySelector('[data-scene-action-remove]').addEventListener('click', () => {
-                if (actionsList.querySelectorAll('[data-scene-action-row]').length <= 1) {
+                if (listEl.querySelectorAll('[data-scene-action-row]').length <= 1) {
                     toast(tr('sceneNeedsAction'), 'error');
                     return;
                 }
                 row.remove();
             });
         };
-        actionsList.querySelectorAll('[data-scene-action-row]').forEach(wireRow);
+
+        const wireVariantBlock = block => {
+            const actionsEl = block.querySelector('[data-scene-variant-actions]');
+            actionsEl.querySelectorAll('[data-scene-action-row]').forEach(row => wireActionRow(row, actionsEl));
+            block.querySelector('[data-scene-variant-add-action]').addEventListener('click', () => {
+                actionsEl.insertAdjacentHTML('beforeend', sceneActionRowHtml({ accessory_id: accessories[0].id, on: true }, accessories));
+                wireActionRow(actionsEl.lastElementChild, actionsEl);
+            });
+            block.querySelector('[data-scene-variant-remove]')?.addEventListener('click', () => {
+                const list = root.querySelector('#wsa-scene-variants-list');
+                if (list.querySelectorAll('[data-scene-variant]').length <= 2) {
+                    toast(tr('sceneNeedsTwoStates'), 'error');
+                    return;
+                }
+                block.remove();
+            });
+        };
+
+        const normalActionsList = root.querySelector('#wsa-scene-actions');
+        normalActionsList.querySelectorAll('[data-scene-action-row]').forEach(row => wireActionRow(row, normalActionsList));
+        root.querySelectorAll('[data-scene-variant]').forEach(wireVariantBlock);
 
         root.querySelectorAll('[data-wsa-scene-close]').forEach(button => button.addEventListener('click', () => root.querySelector('#wsa-scene-modal')?.remove()));
 
         root.querySelector('#wsa-scene-add-action').addEventListener('click', () => {
-            actionsList.insertAdjacentHTML('beforeend', sceneActionRowHtml({ accessory_id: accessories[0].id, on: true }, accessories));
-            wireRow(actionsList.lastElementChild);
+            normalActionsList.insertAdjacentHTML('beforeend', sceneActionRowHtml({ accessory_id: accessories[0].id, on: true }, accessories));
+            wireActionRow(normalActionsList.lastElementChild, normalActionsList);
+        });
+
+        root.querySelector('#wsa-scene-add-variant').addEventListener('click', () => {
+            const list = root.querySelector('#wsa-scene-variants-list');
+            const nextIndex = list.querySelectorAll('[data-scene-variant]').length + 1;
+            list.insertAdjacentHTML('beforeend', sceneVariantBlockHtml({ name: tr('stateDefaultName', { number: nextIndex }), actions: [] }, nextIndex - 1, accessories, true));
+            wireVariantBlock(list.lastElementChild);
+            // Con 3+ estados ya se puede quitar -- el 1° y 2° empiezan sin
+            // botón de quitar (doble mínimo 2), se los habilita recién acá.
+            list.querySelectorAll('[data-scene-variant]').forEach(block => {
+                if (!block.querySelector('[data-scene-variant-remove]')) {
+                    block.querySelector('.wsa-scene-variant-header').insertAdjacentHTML('beforeend',
+                        `<button type="button" class="wsa-card-menu-btn wsa-btn-icon-danger" data-scene-variant-remove title="${tr('removeStateTitle')}">${icon(ICON_CLOSE, 14)}</button>`);
+                    wireVariantBlock(block);
+                }
+            });
+        });
+
+        root.querySelectorAll('input[name="wsa-scene-mode"]').forEach(radio => {
+            radio.addEventListener('change', () => {
+                const selected = radio.value;
+                root.querySelector('#wsa-scene-normal-block').hidden = selected !== 'normal';
+                root.querySelector('#wsa-scene-variants-block').hidden = selected === 'normal';
+                root.querySelector('#wsa-scene-add-variant').hidden = selected === 'toggle';
+                if (selected === 'toggle') {
+                    // Doble: siempre exactamente 2, sin botón de quitar en ninguno.
+                    const list = root.querySelector('#wsa-scene-variants-list');
+                    [...list.querySelectorAll('[data-scene-variant]')].slice(2).forEach(block => block.remove());
+                    list.querySelectorAll('[data-scene-variant-remove]').forEach(btn => btn.remove());
+                }
+            });
         });
 
         if (scene) {
@@ -2044,20 +2261,20 @@ const I18N = {
             const button = event.submitter;
             button.disabled = true;
             const name = root.querySelector('#wsa-scene-name').value.trim();
-            const actionsPayload = [...actionsList.querySelectorAll('[data-scene-action-row]')].map(row => {
-                const accessoryId = row.querySelector('[data-scene-action-accessory]').value;
-                const type = row.querySelector('[data-scene-action-type]').value;
-                if (type === 'color') {
-                    return { accessory_id: accessoryId, color: hexToRgb(row.querySelector('[data-scene-action-color]').value) || [0, 0, 0] };
-                }
-                return { accessory_id: accessoryId, on: type === 'on' };
-            });
+            const selectedMode = root.querySelector('input[name="wsa-scene-mode"]:checked')?.value || 'normal';
+            const params = { name, mode: selectedMode };
+            if (selectedMode === 'normal') {
+                params.actions = JSON.stringify(parseActionRows(normalActionsList));
+            } else {
+                const variantsPayload = [...root.querySelectorAll('[data-scene-variant]')].map(block => ({
+                    name: block.querySelector('[data-scene-variant-name]').value.trim() || tr('stateDefaultName', { number: 1 }),
+                    actions: parseActionRows(block.querySelector('[data-scene-variant-actions]')),
+                }));
+                params.variants = JSON.stringify(variantsPayload);
+            }
             try {
                 const url = scene ? `/api/accessories/scenes/${encodeURIComponent(scene.id)}` : '/api/accessories/scenes';
-                await api(url, {
-                    method: scene ? 'PUT' : 'POST',
-                    body: new URLSearchParams({ name, actions: JSON.stringify(actionsPayload) }),
-                });
+                await api(url, { method: scene ? 'PUT' : 'POST', body: new URLSearchParams(params) });
                 root.querySelector('#wsa-scene-modal')?.remove();
                 toast(scene ? tr('sceneUpdated') : tr('sceneCreated'));
                 await loadWorkshopData({ quiet: true });
@@ -2691,50 +2908,35 @@ const I18N = {
     // RENDER -- shell
     // ============================================================================
 
-    const SUBVIEWS = [
-        { id: 'overview', label: tr('subOverview'), icon: ICON_LAYOUT },
-        { id: 'pines', label: tr('subPines'), icon: ICON_GRID },
-        { id: 'scenes', label: tr('subScenes'), icon: ICON_SCENE, badge: tr('subBadgeNew') },
-        { id: 'leds', label: tr('subLeds'), icon: ICON_LED },
-        { id: 'relays', label: tr('subRelays'), icon: ICON_PLUG },
-        { id: 'sensors', label: tr('subSensors'), icon: ICON_THERMO },
-        { id: 'automations', label: tr('subAutomations'), icon: ICON_ZAP },
-        { id: 'console', label: tr('subConsole'), icon: ICON_TERMINAL },
-        { id: 'templates', label: tr('subTemplates'), icon: ICON_FOLDER },
-        { id: 'alerts', label: tr('subAlerts'), icon: ICON_BELL },
-    ];
-
     function moduleHtml() {
         return `
             <section id="arduino-accessories-section" class="view-section wsa-section" style="display:none">
-                <header class="wsa-header">
+                <header class="wsa-header wsa-dash-header">
                     <div class="wsa-header-icon">${icon(ICON_CPU, 34)}</div>
                     <div class="wsa-header-copy">
                         <h1>${tr('headerTitle')}</h1>
-                        <span class="wsa-header-sub"><strong>NOPAL Labs</strong> · v${PLUGIN_VERSION}</span>
+                        <span class="wsa-header-sub"><strong>NOPAL Labs</strong> · ${tr('headerSubtitle')}</span>
                     </div>
                     <span class="wsa-header-online" id="wsa-header-online"><span class="wsa-status-dot"></span>${tr('checkingStatus')}</span>
                     <div class="wsa-header-actions">
                         <button type="button" class="wsa-btn" id="wsa-docs-btn">${icon(ICON_BOOK, 15)}<span>${tr('docsBtn')}</span></button>
-                        <button type="button" class="wsa-btn" id="wsa-config-btn">${icon(ICON_GEAR, 15)}<span>${tr('configBtn')}</span></button>
-                        <button type="button" class="wsa-btn-icon" id="wsa-manage-header-btn" title="${tr('manageBoardsTitle')}">•••</button>
+                        <button type="button" class="wsa-btn wsa-btn-accent" id="wsa-header-addboard-btn">${icon(ICON_PLUS, 15)}<span>${tr('addBoardBtn')}</span></button>
+                        <button type="button" class="wsa-btn" id="wsa-scan-boards-btn">${icon(ICON_ZAP, 15)}<span>${tr('scanBtn')}</span></button>
+                        <div class="wsa-card-menu">
+                            <button type="button" class="wsa-btn-icon" id="wsa-more-menu-btn" title="${tr('moreOptions')}">${icon(ICON_MORE, 16)}</button>
+                            <div class="wsa-card-menu-dropdown" id="wsa-more-menu" hidden>
+                                <button type="button" id="wsa-manage-header-btn">${icon(ICON_LAYOUT, 14)}<span>${tr('manageBoardsTitle')}</span></button>
+                                <button type="button" data-wsa-view="scenes">${icon(ICON_SCENE, 14)}<span>${tr('subScenes')}</span></button>
+                                <button type="button" data-wsa-view="automations">${icon(ICON_ZAP, 14)}<span>${tr('subAutomations')}</span></button>
+                            </div>
+                        </div>
                     </div>
-                    <div class="wsa-header-chips" id="wsa-header-chips"></div>
                     <button type="button" class="wsa-btn-icon" id="wsa-close-btn" title="${tr('closeTitle')}">${icon(ICON_CLOSE, 16)}</button>
                 </header>
 
                 <div class="wsa-layout">
-                    <aside class="wsa-sidebar">
-                        <nav class="wsa-subnav" id="wsa-subnav"></nav>
-                        <div class="wsa-profile-card">
-                            <div><strong>${esc(state.profile.name)}</strong><small>${esc(state.profile.version)}</small></div>
-                            <button type="button" class="wsa-btn-icon wsa-btn-icon-ghost" id="wsa-profile-settings-btn" title="${tr('settingsTitle')}">${icon(ICON_GEAR, 15)}</button>
-                        </div>
-                    </aside>
                     <div class="wsa-content" id="wsa-content"></div>
                 </div>
-
-                <footer class="wsa-statusbar" id="wsa-statusbar"></footer>
 
                 <div class="wsa-panel-overlay" id="wsa-manageboards-panel" hidden>
                     <div class="wsa-panel-backdrop" data-wsa-close-manageboards></div>
@@ -2754,48 +2956,42 @@ const I18N = {
                         <div class="wsa-manageboards-list" id="wsa-manageboards-list"></div>
                     </div>
                 </div>
+
+                <div class="wsa-panel-overlay" id="wsa-allscenes-panel" hidden>
+                    <div class="wsa-panel-backdrop" data-wsa-close-allscenes></div>
+                    <div class="wsa-panel-dialog wsa-manageboards-dialog">
+                        <button type="button" class="wsa-manageboards-close" data-wsa-close-allscenes>×</button>
+                        <div class="wsa-manageboards-header">
+                            <div class="wsa-manageboards-hexagon">${icon(ICON_SCENE, 24)}</div>
+                            <h2>${tr('allScenesTitle')}</h2>
+                            <p>${tr('allScenesDesc')}</p>
+                        </div>
+                        <div id="wsa-allscenes-list"></div>
+                    </div>
+                </div>
             </section>`;
     }
 
-    function renderHeaderChips() {
-        const board = activeBoard();
-        const entry = catalogEntry(board.catalogId);
-        const live = state.boardTelemetry.find(item => item.id === board.id);
-        const info = live?.telemetry || board.deviceInfo || {};
-        const online = Boolean(live?.online || board.connected);
-        root.querySelector('#wsa-header-chips').innerHTML = `
-            <div class="wsa-chip"><label>${tr('chipBoard')}</label><strong>${esc(info.chip || entry?.chipLabel || entry?.label || board.catalogId)}</strong></div>
-            <div class="wsa-chip"><label>${board.ip ? tr('chipLocalIp') : tr('chipUsbPort')}</label><strong>${esc(board.ip || board.device || '—')}</strong></div>
-            <div class="wsa-chip"><label>${tr('chipUptime')}</label><strong>${info.uptime_ms ? esc(formatDuration(info.uptime_ms)) : '—'}</strong></div>
-            <div class="wsa-chip"><label>${tr('chipFirmware')}</label><strong>${info.firmware ? `v${esc(info.firmware)}` : '—'}</strong></div>`;
+    // Estado global del header -- "activo y conectado" si CUALQUIER placa
+    // registrada está online ahora mismo (telemetry.online real o accesorio
+    // emparejado, ver reconcileBoardConnections()), no solo la placa activa
+    // del mapa de pines como antes.
+    function renderHeaderStatus() {
+        const online = state.boards.some(board => board.connected);
         const onlineEl = root.querySelector('#wsa-header-online');
         onlineEl.classList.toggle('is-online', online);
         onlineEl.innerHTML = `<span class="wsa-status-dot${online ? ' is-on' : ''}"></span>${online ? tr('activeAndConnected') : tr('noConnectionConfirmed')}`;
-    }
-
-    function renderSubnav() {
-        root.querySelector('#wsa-subnav').innerHTML = SUBVIEWS.map(item => `
-            <button type="button" class="wsa-subnav-item${state.view === item.id ? ' active' : ''}" data-wsa-view="${item.id}">
-                ${icon(item.icon, 17)}
-                <span>${esc(item.label)}</span>
-                ${item.badge ? `<em class="wsa-nav-badge">${item.badge}</em>` : ''}
-            </button>`).join('');
-    }
-
-    function renderStatusbar() {
-        const summary = pinSummary(activeBoard());
-        root.querySelector('#wsa-statusbar').innerHTML = `
-            <span><span class="wsa-status-dot is-on"></span>${tr('statusReady')}</span>
-            <span>${tr('assignedPinsLabel', { assigned: summary.assigned, total: summary.total })}</span>
-            <span>${tr('memoryLabel', { value: SYSTEM_STATS.memory })}</span>
-            <span>${tr('latencyLabel', { value: SYSTEM_STATS.latencyMs })}</span>
-            <span>${esc(state.profile.name)} – ${tr('mainPanelLabel')}</span>`;
     }
 
     function switchWorkshopView(view) {
         state.view = view;
         state.selectedPinKey = null;
         render();
+    }
+
+    function closeHeaderMenu() {
+        const menu = root.querySelector('#wsa-more-menu');
+        if (menu) menu.hidden = true;
     }
 
     // ============================================================================
@@ -2806,20 +3002,19 @@ const I18N = {
         const content = root.querySelector('#wsa-content');
         if (!state.wizard.checked) { content.innerHTML = viewWizardChecking(); return; }
         if (state.wizard.active) { content.innerHTML = viewWizard(); return; }
+        if (state.view === 'overview') { content.innerHTML = viewDashboard(); return; }
+        if (state.view === 'documentation') { content.innerHTML = viewDocumentation(); return; }
+        let body = '';
         switch (state.view) {
-            case 'overview': content.innerHTML = viewOverview(); break;
-            case 'documentation': content.innerHTML = viewDocumentation(); break;
-            case 'pines': content.innerHTML = viewPinMap(); break;
-            case 'scenes': content.innerHTML = viewScenes(); break;
-            case 'leds': content.innerHTML = viewFilteredPins('led_ws2812,led_pwm', tr('subLeds'), tr('ledsFilteredSubtitle')); break;
-            case 'relays': content.innerHTML = viewFilteredPins('relay', tr('subRelays'), tr('relaysFilteredSubtitle')); break;
-            case 'sensors': content.innerHTML = viewFilteredPins('sensor_temp,sensor_smoke,sensor_door,i2c,adc', tr('subSensors'), tr('sensorsFilteredSubtitle')); break;
-            case 'automations': content.innerHTML = viewAutomations(); break;
-            case 'console': content.innerHTML = viewConsole(); break;
-            case 'templates': content.innerHTML = viewTemplates(); break;
-            case 'alerts': content.innerHTML = viewAlerts(); break;
-            default: content.innerHTML = '';
+            case 'pines': body = viewPinMap(); break;
+            case 'scenes': body = viewScenes(); break;
+            case 'leds': body = viewFilteredPins('led_ws2812,led_pwm', tr('subLeds'), tr('ledsFilteredSubtitle')); break;
+            case 'relays': body = viewFilteredPins('relay', tr('subRelays'), tr('relaysFilteredSubtitle')); break;
+            case 'sensors': body = viewFilteredPins('sensor_temp,sensor_smoke,sensor_door,i2c,adc', tr('subSensors'), tr('sensorsFilteredSubtitle')); break;
+            case 'automations': body = viewAutomations(); break;
+            default: body = '';
         }
+        content.innerHTML = `<button type="button" class="wsa-btn wsa-back-to-dashboard" id="wsa-back-to-dashboard">← ${tr('backToPanel')}</button>${body}`;
     }
 
     function cardWrap(title, iconBody, bodyHtml, extraClass = '') {
@@ -2991,85 +3186,149 @@ const I18N = {
         return '';
     }
 
-    function viewOverview() {
-        const board = activeBoard();
-        const entry = catalogEntry(board?.catalogId);
-        const liveBoard = state.boardTelemetry.find(item => item.id === board?.id);
-        const info = liveBoard?.telemetry || board?.deviceInfo || {};
-        const relays = state.accessories.filter(item => item.config?.relay != null || (item.kind !== 'led_strip' && !item.config?.led_mode));
-        const leds = state.accessories.filter(item => item.kind === 'led_strip' || item.config?.led_mode);
-        const activeCount = relays.filter(item => item.on === true).length;
-        const relayCount = Number(info.relays || relays.length || 0);
-        const ledCount = Number(info.ws2812_count || leds.length || 0);
-        const online = Boolean(liveBoard?.online || board?.connected);
-        const rssi = info.rssi != null ? `${info.rssi} dBm` : tr('notReported');
-        const tabs = [
-            ['relays', tr('subRelays')], ['lights', tr('tabLedStrips')], ['inputs', tr('tabInputs')],
-            ['sensors', tr('subSensors')], ['scenes', tr('tabMacros')],
-        ];
-        return `
-            <div class="wsa-classic-dashboard">
-                <section class="wsa-classic-panel wsa-classic-summary">
-                    <h2>${icon(ICON_ACTIVITY, 17)}${tr('systemSummary')}</h2>
-                    <div class="wsa-classic-metrics">
-                        <article>${icon(ICON_LAYOUT, 34)}<strong>${relayCount || '—'}</strong><span>${tr('subRelays')}</span><small>${tr('activeCount', { count: activeCount })}</small></article>
-                        <article class="is-yellow">${icon(ICON_LED, 34)}<strong>${ledCount || '—'}</strong><span>${tr('tabLedStrips')}</span><small>${tr('activeCountFem', { count: leds.filter(item => item.on).length })}</small></article>
-                        <article class="is-blue">${icon(ICON_ZAP, 34)}<span>${tr('connectivity')}</span><strong class="is-word">${board?.ip ? 'WiFi' : (board?.device ? 'USB' : '—')}</strong><small>${tr('signalLabel')} ${esc(rssi)}</small></article>
-                        <article class="is-purple">${icon(ICON_CHECK, 34)}<span>${tr('stateLabel')}</span><strong class="is-word">${online ? tr('optimalState') : tr('pendingState')}</strong><small>${online ? tr('realTelemetry') : tr('noResponse')}</small></article>
-                    </div>
-                </section>
+    // ============================================================================
+    // PANEL PRINCIPAL -- barra de stats, galería de placas, vista rápida de
+    // la placa seleccionada y acciones rápidas. Todo agregado a partir de
+    // pinSummary() (pines realmente asignados) + state.boardTelemetry
+    // (última telemetría real probada) + state.activity (eventos reales) --
+    // ver tabla de decisiones del plan, nada de esto es inventado.
+    // ============================================================================
 
-                <section class="wsa-classic-panel wsa-classic-power">
-                    <h2>${icon(ICON_ZAP, 17)}${tr('consumptionVoltage')}</h2>
-                    <div class="wsa-classic-power-values"><div><span>${tr('adcInputGpio', { gpio: esc(info.adc_gpio || '—') })}</span><strong>${info.a0_raw != null ? `${esc(info.a0_raw)} RAW` : '—'}</strong><small>${info.a0_percent != null ? tr('percentOfRange', { value: esc(info.a0_percent) }) : tr('noReading')}</small></div><div><span>${tr('currentConsumption')}</span><strong>—</strong><small>${tr('sensorNotInstalled')}</small></div></div>
-                    <div class="wsa-classic-signal"><i style="width:${Math.max(0, Math.min(100, Number(info.a0_percent || 0)))}%"></i></div>
-                    <p>${tr('adcInstantReadingNote')}</p>
-                </section>
-
-                <section class="wsa-classic-panel wsa-classic-connection">
-                    <h2>${icon(ICON_ZAP, 17)}${tr('connectionState')}</h2>
-                    <ul><li><i class="${online ? 'on' : ''}"></i><span>${tr('chipBoard')}</span><strong>${online ? tr('connectedState') : tr('noResponse')}</strong></li><li><i class="${info.wifi_connected ? 'on' : ''}"></i><span>WiFi${info.ssid ? ` (${esc(info.ssid)})` : ''}</span><strong>${info.wifi_connected ? esc(rssi) : tr('notReportedMasc')}</strong></li><li><i class="${online ? 'on' : ''}"></i><span>API / USB</span><strong>${online ? tr('availableState') : tr('pendingState')}</strong></li><li><i class="${online ? 'on' : ''}"></i><span>${tr('responseTime')}</span><strong>${info.latency_ms != null ? `${esc(info.latency_ms)} ms` : '—'}</strong></li></ul>
-                    <button type="button" class="wsa-btn wsa-btn-block" id="wsa-workshop-refresh">${icon(ICON_ACTIVITY, 14)}${tr('wizardTestConnection')}</button>
-                </section>
-
-                <section class="wsa-classic-panel wsa-classic-controls">
-                    <div class="wsa-classic-panel-head"><h2>${icon(ICON_LAYOUT, 17)}${tr('devicesAndControls')}</h2><button type="button" class="wsa-btn" id="wsa-classic-quick">${icon(ICON_ZAP, 14)}${tr('quickActions')}</button></div>
-                    <nav class="wsa-classic-tabs">${tabs.map(([id, label]) => `<button type="button" class="${state.overviewTab === id ? 'active' : ''}" data-wsa-overview-tab="${id}">${esc(label)}</button>`).join('')}</nav>
-                    ${classicControlPanel(relays, leds, board, info, liveBoard)}
-                </section>
-
-                <section class="wsa-classic-panel wsa-classic-activity">
-                    <h2>${icon(ICON_ACTIVITY, 17)}${tr('recentActivity')}</h2>
-                    ${classicActivityHtml()}
-                </section>
-
-                <section class="wsa-classic-panel wsa-classic-scenes">
-                    <div class="wsa-card-title-row"><h2>${icon(ICON_SCENE, 17)}${tr('macrosAndScenes')}</h2><button type="button" class="wsa-btn wsa-btn-small" id="wsa-scene-new">${icon(ICON_PLUS, 13)}<span>${tr('newWord')}</span></button></div>
-                    <div class="wsa-scene-list">${state.scenes.length ? state.scenes.map(scene => `<div class="wsa-scene-row"><button type="button" class="wsa-btn" data-wsa-workshop-scene="${esc(scene.id)}">${icon(ICON_ZAP, 14)}${esc(scene.name)}</button><button type="button" class="wsa-card-menu-btn" data-wsa-scene-edit="${esc(scene.id)}" title="${tr('editSceneTitle')}">${icon(ICON_GEAR, 14)}</button></div>`).join('') : `<span class="wsa-empty">${tr('noScenesSaved')}</span>`}</div>
-                </section>
-
-                <section class="wsa-classic-panel wsa-classic-device">
-                    <h2>${icon(ICON_CPU, 17)}${tr('deviceInfo')}</h2>
-                    <div class="wsa-classic-device-body"><dl><dt>${tr('wizardModelLabel')}</dt><dd>${esc(info.chip || entry?.chipLabel || entry?.label || '—')}</dd><dt>${tr('chipBoard')}</dt><dd>${esc(info.board || board?.catalogId || '—')}</dd><dt>${tr('connectionLabel')}</dt><dd>${esc(board?.ip || board?.device || '—')}</dd><dt>${tr('chipFirmware')}</dt><dd>${info.firmware ? `v${esc(info.firmware)}` : '—'}</dd></dl><div><span>${tr('freeMemory')}</span><strong>${info.free_heap ? `${Math.round(info.free_heap / 1024)} KB` : tr('notAvailable')}</strong><i><em style="width:${info.free_heap ? '63%' : '0%'}"></em></i><span>${tr('pinProfile')}</span><strong>${esc(entry?.label || tr('noProfile'))}</strong></div></div>
-                </section>
-            </div>`;
+    function boardAccessories(board) {
+        if (!board) return [];
+        return state.accessories.filter(item => {
+            const config = item.config || {};
+            return (board.ip && config.ip === board.ip) || (board.device && config.device === board.device);
+        });
     }
 
-    function classicControlPanel(relays, leds, board, info, liveBoard) {
+    function boardLiveTelemetry(board) {
+        return state.boardTelemetry.find(item => String(item.id) === String(board?.id));
+    }
+
+    // "Con advertencia" = pines con función duplicada en el mapa (dato ya
+    // calculado por pinSummary) o señal WiFi débil reportada de verdad
+    // (rssi <= -70 dBm). No existe un flag de advertencia en el backend --
+    // ver tabla de decisiones del plan.
+    function dashboardBoardWarning(summary, live) {
+        if (summary.warnings > 0) return { warn: true, reason: tr('warnReasonPins') };
+        const rssi = live?.telemetry?.rssi;
+        if (live?.online && rssi != null && Number(rssi) <= -70) return { warn: true, reason: tr('warnReasonSignal') };
+        return { warn: false, reason: '' };
+    }
+
+    function activityActionLabel(action) {
+        const labels = { power_on: tr('actPowerOn'), power_off: tr('actPowerOff'), led_color: tr('actLedColor'), scene_run: tr('actSceneRun'), registered: tr('actRegistered'), removed: tr('actRemoved') };
+        return labels[action] || action || '';
+    }
+
+    function boardLatestActivityLine(board) {
+        const ids = new Set(boardAccessories(board).map(item => item.id));
+        if (!ids.size) return '';
+        const event = state.activity.find(item => ids.has(item.accessory_id));
+        if (!event) return '';
+        const tone = event.action === 'power_on' || event.action === 'scene_run' ? 'is-on' : (event.action === 'power_off' ? 'is-off' : 'is-info');
+        return `<span class="wsa-board-activity-dot ${tone}"></span>${esc(event.name)} · ${esc(activityActionLabel(event.action))}`;
+    }
+
+    function dashboardStats() {
+        const stats = { totalBoards: state.boards.length, connectedBoards: 0, warningBoards: 0, relays: 0, leds: 0, sensors: 0, freePins: 0, totalPins: 0, bestRssi: null, maxUptime: 0 };
+        state.boards.forEach(board => {
+            const summary = pinSummary(board);
+            const live = boardLiveTelemetry(board);
+            const info = live?.telemetry || {};
+            if (board.connected) stats.connectedBoards++;
+            if (dashboardBoardWarning(summary, live).warn) stats.warningBoards++;
+            stats.relays += summary.byCategory.relay || 0;
+            stats.leds += (summary.byCategory.led_ws2812 || 0) + (summary.byCategory.led_pwm || 0);
+            stats.sensors += (summary.byCategory.sensor_temp || 0) + (summary.byCategory.sensor_smoke || 0) + (summary.byCategory.sensor_door || 0) + (summary.byCategory.i2c || 0) + (summary.byCategory.adc || 0);
+            stats.freePins += summary.free;
+            stats.totalPins += summary.total;
+            if (live?.online && info.rssi != null && (stats.bestRssi === null || Number(info.rssi) > stats.bestRssi)) stats.bestRssi = Number(info.rssi);
+            if (live?.online && info.uptime_ms) stats.maxUptime = Math.max(stats.maxUptime, Number(info.uptime_ms));
+        });
+        return stats;
+    }
+
+    function sortedDashboardBoards() {
+        const boards = [...state.boards];
+        if (state.boardsSort === 'status') {
+            boards.sort((a, b) => Number(b.connected) - Number(a.connected));
+        } else if (state.boardsSort === 'signal') {
+            const rssiOf = board => { const info = boardLiveTelemetry(board)?.telemetry; return info?.rssi != null ? Number(info.rssi) : -999; };
+            boards.sort((a, b) => rssiOf(b) - rssiOf(a));
+        } else {
+            boards.sort((a, b) => a.name.localeCompare(b.name));
+        }
+        return boards;
+    }
+
+    function boardCardHtml(board) {
+        const entry = catalogEntry(board.catalogId);
+        const live = boardLiveTelemetry(board);
+        const info = live?.telemetry || board.deviceInfo || {};
+        const summary = pinSummary(board);
+        const warning = dashboardBoardWarning(summary, live);
+        const online = Boolean(live?.online || board.connected);
+        const statusClass = warning.warn ? 'is-warning' : (online ? 'is-online' : 'is-offline');
+        const statusLabel = warning.warn ? tr('boardStatusWarning') : (online ? tr('boardStatusOnline') : tr('boardStatusOffline'));
+        const relayCount = Number(info.relays || summary.byCategory.relay || 0);
+        const ledCount = Number(info.ws2812_count || (summary.byCategory.led_ws2812 || 0) + (summary.byCategory.led_pwm || 0));
+        const sensorCount = (summary.byCategory.sensor_temp || 0) + (summary.byCategory.sensor_smoke || 0) + (summary.byCategory.sensor_door || 0) + (summary.byCategory.i2c || 0) + (summary.byCategory.adc || 0);
+        const activityLine = boardLatestActivityLine(board);
+        return `<article class="wsa-board-card ${statusClass}${board.id === state.activeBoardId ? ' is-selected' : ''}" data-wsa-board="${esc(board.id)}">
+            <div class="wsa-board-card-media">${boardImageHtml(board.catalogId, 6)}</div>
+            <div class="wsa-board-card-head">
+                <div><strong>${esc(board.name)}</strong><small>${esc(entry?.label || board.catalogId || '—')}</small></div>
+                <span class="wsa-status-pill wsa-status-pill-${statusClass}" title="${esc(warning.reason)}">${warning.warn ? icon(ICON_WARNING, 12) : ''}${statusLabel}</span>
+            </div>
+            <div class="wsa-board-card-meta">
+                <span>${icon(board.ip ? ICON_WIFI : ICON_PLUG, 13)}${esc(board.ip || board.device || '—')}</span>
+                ${board.ip ? `<span>${icon(ICON_WIFI, 13)}${info.rssi != null ? `${esc(info.rssi)} dBm` : '—'}</span>` : ''}
+                <span>${info.firmware ? `FW v${esc(info.firmware)}` : `FW —`}</span>
+            </div>
+            ${activityLine ? `<div class="wsa-board-card-activity">${activityLine}</div>` : ''}
+            <div class="wsa-board-card-stats">
+                <div><strong>${relayCount}</strong><span>${tr('subRelays')}</span></div>
+                <div><strong>${ledCount}</strong><span>LEDs</span></div>
+                <div><strong>${sensorCount}</strong><span>${tr('subSensors')}</span></div>
+                <div><strong>${summary.free}/${summary.total}</strong><span>${tr('freePinsLabel')}</span></div>
+            </div>
+            <div class="wsa-board-card-actions">
+                <button type="button" class="wsa-btn wsa-btn-small" data-wsa-card-edit="${esc(board.id)}">${icon(ICON_GEAR, 12)}<span>${tr('editBtn')}</span></button>
+                <button type="button" class="wsa-btn wsa-btn-small" data-wsa-card-pins="${esc(board.id)}">${icon(ICON_GRID, 12)}<span>${tr('subPines')}</span></button>
+                <button type="button" class="wsa-btn wsa-btn-small" data-wsa-card-actions="${esc(board.id)}">${icon(ICON_ZAP, 12)}<span>${tr('quickActions')}</span></button>
+                <button type="button" class="wsa-btn wsa-btn-small" data-wsa-card-duplicate="${esc(board.id)}">${icon(ICON_COPY, 12)}<span>${tr('duplicateBtn')}</span></button>
+                <button type="button" class="wsa-btn wsa-btn-small wsa-btn-icon-danger" data-wsa-card-delete="${esc(board.id)}">${icon(ICON_CLOSE, 12)}<span>${tr('deleteTitle')}</span></button>
+            </div>
+        </article>`;
+    }
+
+    function quickViewTabsDef(summary) {
+        return [
+            ['summary', tr('quickTabSummary')],
+            ['relays', `${tr('subRelays')} (${summary.byCategory.relay || 0})`],
+            ['lights', `LEDs (${(summary.byCategory.led_ws2812 || 0) + (summary.byCategory.led_pwm || 0)})`],
+            ['sensors', `${tr('subSensors')} (${(summary.byCategory.sensor_temp || 0) + (summary.byCategory.sensor_smoke || 0) + (summary.byCategory.sensor_door || 0) + (summary.byCategory.i2c || 0) + (summary.byCategory.adc || 0)})`],
+            ['inputs', tr('tabInputs')],
+            ['free', `${tr('quickTabFree')} (${summary.free})`],
+        ];
+    }
+
+    function quickViewTabContent(board, summary, info, live) {
         if (state.workshopLoading) return `<div class="wsa-classic-loading"><div class="wsa-spinner"></div><span>${tr('readingBoard')}</span></div>`;
+        const relays = boardAccessories(board).filter(item => item.config?.relay != null || (item.kind !== 'led_strip' && !item.config?.led_mode));
+        const leds = boardAccessories(board).filter(item => item.kind === 'led_strip' || item.config?.led_mode);
+        if (state.overviewTab === 'summary') {
+            const entries = [...visiblePinEntries(board, 'left'), ...visiblePinEntries(board, 'right')].filter(({ pin }) => !['free', 'power', 'ground'].includes(pin.category));
+            if (!entries.length) return `<p class="wsa-empty">${tr('firmwareNoPinsThisSide')}</p>`;
+            return `<div class="wsa-quickview-pinlist">${entries.map(({ pin }) => { const cat = categoryInfo(pin.category); return `<div><span class="wsa-pin-chip" style="background:${cat.color}22;color:${cat.color};border-color:${cat.color}55">${esc(pin.gpio)}</span><span>${esc(pin.label)}</span><em>${esc(cat.label)}</em></div>`; }).join('')}</div>`;
+        }
         if (state.overviewTab === 'relays') {
             const count = Math.max(relays.length, Number(info.relays || 0));
             if (!count) return `<div class="wsa-classic-empty">${tr('boardNoRelaysReported')}</div>`;
-            // Antes se usaba relays[index] -- posición en el array de
-            // registrados, no el número de relé real (config.relay). Si un
-            // accesorio se registraba fuera de orden, o dos apuntaban al
-            // mismo relay por error, las tarjetas mostraban nombres/switches
-            // en el slot equivocado. Ahora se busca por config.relay real.
             const relaysByNumber = {};
-            relays.forEach(item => {
-                const relayNumber = Number(item.config?.relay);
-                if (relayNumber) relaysByNumber[relayNumber] = item;
-            });
+            relays.forEach(item => { const relayNumber = Number(item.config?.relay); if (relayNumber) relaysByNumber[relayNumber] = item; });
             return `<div class="wsa-classic-relays">${Array.from({ length: count }, (_, index) => {
                 const slotNumber = index + 1;
                 const item = relaysByNumber[slotNumber];
@@ -3077,14 +3336,218 @@ const I18N = {
             }).join('')}</div><footer class="wsa-classic-control-footer"><span><i class="on"></i>${tr('activeCount', { count: relays.filter(item => item.on).length })}</span><span>${tr('inactiveCount', { count: Math.max(0, count - relays.filter(item => item.on).length) })}</span><button type="button" class="wsa-btn" id="wsa-workshop-add-accessory">${tr('editRelays')}</button></footer>`;
         }
         if (state.overviewTab === 'lights') return workshopLightsPanel(leds);
-        if (state.overviewTab === 'inputs') return `<div class="wsa-classic-telemetry"><article><span>${tr('inputLabel')}</span><strong>GPIO${esc(info.adc_gpio || '—')} · ADC1</strong><small>${tr('wifiCompatible')}</small></article><article><span>${tr('rawReading')}</span><strong>${info.a0_raw ?? '—'}</strong><small>12 bits · 0–4095</small></article><article><span>${tr('percentageLabel')}</span><strong>${info.a0_percent != null ? `${esc(info.a0_percent)}%` : '—'}</strong><small>${tr('ofAdcRange')}</small></article><article><span>${tr('transportLabel')}</span><strong>${esc(liveBoard?.transport?.toUpperCase() || (board.ip ? 'WIFI' : 'USB'))}</strong><small>${esc(board.ip || board.device || tr('notConfiguredMasc'))}</small></article></div>`;
-        if (state.overviewTab === 'sensors') return workshopSensorsPanel(board, info, liveBoard);
-        return workshopScenesPanel();
+        if (state.overviewTab === 'sensors') return workshopSensorsPanel(board, info, live);
+        if (state.overviewTab === 'inputs') return `<div class="wsa-classic-telemetry"><article><span>${tr('inputLabel')}</span><strong>GPIO${esc(info.adc_gpio || '—')} · ADC1</strong><small>${tr('wifiCompatible')}</small></article><article><span>${tr('rawReading')}</span><strong>${info.a0_raw ?? '—'}</strong><small>12 bits · 0–4095</small></article><article><span>${tr('percentageLabel')}</span><strong>${info.a0_percent != null ? `${esc(info.a0_percent)}%` : '—'}</strong><small>${tr('ofAdcRange')}</small></article><article><span>${tr('transportLabel')}</span><strong>${esc(live?.transport?.toUpperCase() || (board.ip ? 'WIFI' : 'USB'))}</strong><small>${esc(board.ip || board.device || tr('notConfiguredMasc'))}</small></article></div>`;
+        if (state.overviewTab === 'free') {
+            const freeEntries = [...visiblePinEntries(board, 'left'), ...visiblePinEntries(board, 'right')].filter(({ pin }) => pin.category === 'free');
+            if (!freeEntries.length) return `<p class="wsa-empty">${tr('noFreePinsLabel')}</p>`;
+            return `<div class="wsa-quickview-pinlist">${freeEntries.map(({ pin }) => `<div><span class="wsa-pin-chip">${esc(pin.gpio)}</span><span>${esc(pin.label)}</span></div>`).join('')}</div>`;
+        }
+        return '';
     }
 
-    function classicActivityHtml() {
-        if (!state.activity.length) return `<p class="wsa-classic-empty">${tr('noRecentActivity')}</p>`;
-        return `<ul>${state.activity.slice(0, 5).map(event => `<li>${icon(ICON_ACTIVITY, 15)}<span>${esc(event.name)} · ${esc(event.action || tr('eventWord'))}</span><time>${formatRelativeTime(event.timestamp)}</time></li>`).join('')}</ul><button type="button" class="wsa-btn wsa-btn-block" data-wsa-view="console">${tr('viewFullHistory')}</button>`;
+    function quickViewPanelHtml(board) {
+        if (!board) return `<section class="wsa-card wsa-quickview"><h2>${icon(ICON_LAYOUT, 17)}${tr('quickViewTitle')}</h2><p class="wsa-empty">${tr('noBoardsAddedYet')}</p></section>`;
+        const live = boardLiveTelemetry(board);
+        const info = live?.telemetry || board.deviceInfo || {};
+        const online = Boolean(live?.online || board.connected);
+        const summary = pinSummary(board);
+        if (!['summary', 'relays', 'lights', 'sensors', 'inputs', 'free'].includes(state.overviewTab)) state.overviewTab = 'summary';
+        const tabs = quickViewTabsDef(summary);
+        return `<section class="wsa-card wsa-quickview">
+            <div class="wsa-card-title-row"><h2>${icon(ICON_LAYOUT, 17)}${tr('quickViewTitle')}</h2><span class="wsa-status-pill">${esc(board.name)}</span></div>
+            <div class="wsa-quickview-body">
+                <div class="wsa-quickview-media">
+                    ${boardImageHtml(board.catalogId, 8)}
+                    <span class="wsa-quickview-state"><span class="wsa-status-dot${online ? ' is-on' : ''}"></span>${online ? tr('connectedState') : tr('noResponse')}</span>
+                    <span class="wsa-text-muted">${tr('signalLabel')} ${info.rssi != null ? `${esc(info.rssi)} dBm` : '—'}</span>
+                </div>
+                <div class="wsa-quickview-main">
+                    <nav class="wsa-classic-tabs">${tabs.map(([id, label]) => `<button type="button" class="${state.overviewTab === id ? 'active' : ''}" data-wsa-overview-tab="${id}">${label}</button>`).join('')}</nav>
+                    <div class="wsa-quickview-content">${quickViewTabContent(board, summary, info, live)}</div>
+                </div>
+            </div>
+            <div class="wsa-quickview-footer">
+                <button type="button" class="wsa-btn" id="wsa-workshop-refresh">${icon(ICON_REFRESH, 14)}<span>${tr('restartBoardBtn')}</span></button>
+                <button type="button" class="wsa-btn wsa-btn-accent" data-wsa-card-pins="${esc(board.id)}">${icon(ICON_GRID, 14)}<span>${tr('viewFullMapBtn')}</span></button>
+            </div>
+        </section>`;
+    }
+
+    // Doble/múltiple: qué estado quedó activo la última vez que se corrió
+    // (persistido en el propio scene, no inferido acá) -- vacío en modo
+    // normal, que no tiene "estado", siempre hace lo mismo.
+    function sceneStateBadge(scene) {
+        if (scene.mode === 'normal' || !scene.current_state_name) return '';
+        return `<small class="wsa-scene-state-badge">${esc(scene.current_state_name)}</small>`;
+    }
+
+    function recentScenesHtml(limit) {
+        const runs = state.scenes
+            .map(scene => ({ scene, event: state.activity.find(item => item.accessory_id === `scene:${scene.id}`) }))
+            .filter(item => item.event)
+            .sort((a, b) => b.event.timestamp - a.event.timestamp);
+        const list = limit ? runs.slice(0, limit) : runs;
+        if (!list.length) return `<p class="wsa-empty">${tr('noScenesRunYet')}</p>`;
+        return `<div class="wsa-scene-list">${list.map(({ scene, event }) => `<div class="wsa-scene-row">
+            <button type="button" class="wsa-btn" data-wsa-workshop-scene="${esc(scene.id)}">${icon(ICON_ZAP, 14)}${esc(scene.name)}${sceneStateBadge(scene)}</button>
+            <small class="wsa-text-muted">${tr('lastRunLabel')}: ${formatRelativeTime(event.timestamp)}</small>
+            <button type="button" class="wsa-card-menu-btn" data-wsa-scene-edit="${esc(scene.id)}" title="${tr('editSceneTitle')}">${icon(ICON_GEAR, 14)}</button>
+        </div>`).join('')}</div>`;
+    }
+
+    function quickActionsPanelHtml() {
+        const quickScenes = state.scenes.slice(0, 2);
+        return `<section class="wsa-card wsa-quickactions" id="wsa-quickactions-anchor">
+            <h2>${icon(ICON_ZAP, 17)}${tr('quickActionsAutomationsTitle')}</h2>
+            <div class="wsa-quickactions-block">
+                <h3>${tr('quickActionsSubtitle')}</h3>
+                <div class="wsa-quickactions-grid">
+                    ${quickScenes.map(scene => `<button type="button" class="wsa-btn" data-wsa-workshop-scene="${esc(scene.id)}">${icon(ICON_ZAP, 14)}<span>${esc(scene.name)}</span>${sceneStateBadge(scene)}</button>`).join('')}
+                    <button type="button" class="wsa-btn" id="wsa-test-relays-btn">${icon(ICON_PLUG, 14)}<span>${tr('testRelaysBtn')}</span></button>
+                    <button type="button" class="wsa-btn" id="wsa-test-leds-btn">${icon(ICON_LED, 14)}<span>${tr('testLedsBtn')}</span></button>
+                    <button type="button" class="wsa-btn" id="wsa-test-connection-btn">${icon(ICON_REFRESH, 14)}<span>${tr('restartBoardBtn')}</span></button>
+                    <button type="button" class="wsa-btn" id="wsa-sync-btn">${icon(ICON_REFRESH, 14)}<span>${tr('syncBtn')}</span></button>
+                </div>
+            </div>
+            <div class="wsa-card-title-row"><h3>${tr('recentScenesTitle')}</h3><button type="button" class="wsa-btn wsa-btn-small" id="wsa-scenes-viewall">${tr('viewAllBtn')}</button></div>
+            ${recentScenesHtml(3)}
+        </section>`;
+    }
+
+    function resourcesFooterHtml() {
+        const links = [
+            { iconBody: ICON_BOOK, title: tr('resQuickGuideTitle'), sub: tr('resQuickGuideSub'), action: 'docs-start' },
+            { iconBody: ICON_TERMINAL, title: tr('resApiTitle'), sub: tr('resApiSub'), action: 'docs-commands' },
+            { iconBody: ICON_ZAP, title: tr('resHaTitle'), sub: tr('resHaSub'), action: 'docs-ha' },
+            { iconBody: ICON_CPU, title: tr('resFirmwareTitle'), sub: tr('resFirmwareSub'), action: 'docs-services' },
+            { iconBody: ICON_ACTIVITY, title: tr('resDiagnosticsTitle'), sub: tr('resDiagnosticsSub'), action: 'diagnostics' },
+        ];
+        return `<section class="wsa-resources-footer">
+            <h2>${tr('resourcesTitle')}</h2>
+            <div class="wsa-resources-grid">${links.map(link => `<button type="button" class="wsa-resource-link" data-wsa-resource="${link.action}">${icon(link.iconBody, 20)}<div><strong>${esc(link.title)}</strong><small>${esc(link.sub)}</small></div></button>`).join('')}</div>
+        </section>`;
+    }
+
+    function viewDashboard() {
+        const stats = dashboardStats();
+        const board = activeBoard();
+        return `<div class="wsa-dashboard">
+            <div class="wsa-dash-statbar">
+                <div class="wsa-dash-stat">${icon(ICON_CPU, 20)}<strong>${stats.totalBoards}</strong><span>${tr('connectedBoardsLabel')}</span></div>
+                <div class="wsa-dash-stat${stats.warningBoards ? ' is-warning' : ''}">${icon(ICON_WARNING, 20)}<strong>${stats.warningBoards}</strong><span>${tr('withWarningLabel')}</span></div>
+                <div class="wsa-dash-stat">${icon(ICON_PLUG, 20)}<strong>${stats.relays}</strong><span>${tr('totalRelaysLabel')}</span></div>
+                <div class="wsa-dash-stat">${icon(ICON_LED, 20)}<strong>${stats.leds}</strong><span>${tr('totalLedsLabel')}</span></div>
+                <div class="wsa-dash-stat">${icon(ICON_THERMO, 20)}<strong>${stats.sensors}</strong><span>${tr('subSensors')}</span></div>
+                <div class="wsa-dash-stat">${icon(ICON_GRID, 20)}<strong>${stats.freePins} / ${stats.totalPins}</strong><span>${tr('freePinsLabel')}</span></div>
+                <div class="wsa-dash-stat">${icon(ICON_CLOCK, 20)}<strong>${stats.maxUptime ? formatDuration(stats.maxUptime) : '—'}</strong><span>${tr('networkUptimeLabel')}</span></div>
+                <div class="wsa-dash-stat">${icon(ICON_WIFI, 20)}<strong>${stats.bestRssi != null ? `${stats.bestRssi} dBm` : '—'}</strong><span>${tr('wifiHealthLabel')}</span></div>
+            </div>
+
+            <section class="wsa-card wsa-dash-boards">
+                <div class="wsa-card-title-row">
+                    <h2>${icon(ICON_LAYOUT, 17)}${tr('connectedBoardsTitle')}<span class="wsa-status-pill">${stats.totalBoards}</span>${stats.warningBoards ? `<span class="wsa-status-pill wsa-status-pill-is-warning">${icon(ICON_WARNING, 11)} ${tr('withWarningCount', { count: stats.warningBoards })}</span>` : ''}</h2>
+                    <div class="wsa-dash-boards-tools">
+                        <label class="wsa-dash-sort"><span>${tr('sortLabel')}</span>
+                            <select id="wsa-boards-sort">
+                                <option value="name" ${state.boardsSort === 'name' ? 'selected' : ''}>${tr('sortByName')}</option>
+                                <option value="status" ${state.boardsSort === 'status' ? 'selected' : ''}>${tr('sortByStatus')}</option>
+                                <option value="signal" ${state.boardsSort === 'signal' ? 'selected' : ''}>${tr('sortBySignal')}</option>
+                            </select>
+                        </label>
+                        <button type="button" class="wsa-btn-icon" id="wsa-boards-viewmode" title="${tr('toggleViewTitle')}">${icon(state.boardsViewMode === 'grid' ? ICON_LIST : ICON_GRID, 15)}</button>
+                    </div>
+                </div>
+                <div class="wsa-board-grid${state.boardsViewMode === 'list' ? ' is-list' : ''}">
+                    ${sortedDashboardBoards().map(boardCardHtml).join('') || `<p class="wsa-empty">${tr('noBoardsAddedYet')}</p>`}
+                </div>
+            </section>
+
+            <div class="wsa-dash-lower">
+                ${quickViewPanelHtml(board)}
+                ${quickActionsPanelHtml()}
+            </div>
+
+            ${resourcesFooterHtml()}
+        </div>`;
+    }
+
+    async function testBoardConnection(boardId) {
+        await loadWorkshopData({ quiet: true });
+        const board = state.boards.find(item => item.id === boardId);
+        toast(board?.connected ? tr('boardConnectionOk', { name: board.name }) : tr('boardConnectionFailed', { name: board?.name || '' }), board?.connected ? 'success' : 'error');
+        render();
+    }
+
+    // "Probar relés/LEDs" -- enciende cada accesorio real de la placa
+    // seleccionada un momento y lo vuelve a apagar, en secuencia (no todos
+    // a la vez) usando los mismos endpoints reales de encendido/color. No
+    // existe un endpoint bulk de prueba en el backend.
+    async function testWorkshopRelays(board) {
+        const relays = boardAccessories(board).filter(item => item.config?.relay != null || (item.kind !== 'led_strip' && !item.config?.led_mode));
+        if (!relays.length) return toast(tr('noRelaysToTest'), 'error');
+        toast(tr('testingRelays', { count: relays.length }));
+        for (const item of relays) {
+            try {
+                await api('/api/accessories/power', { method: 'POST', body: new URLSearchParams({ id: item.id, on: 'true' }) });
+                await new Promise(resolve => setTimeout(resolve, 400));
+                await api('/api/accessories/power', { method: 'POST', body: new URLSearchParams({ id: item.id, on: 'false' }) });
+            } catch (error) { /* seguimos con el resto aunque uno falle */ }
+        }
+        await loadWorkshopData({ quiet: true });
+        render();
+    }
+
+    async function testWorkshopLeds(board) {
+        const leds = boardAccessories(board).filter(item => item.kind === 'led_strip' || item.config?.led_mode);
+        if (!leds.length) return toast(tr('noLedsToTest'), 'error');
+        toast(tr('testingLeds', { count: leds.length }));
+        for (const item of leds) {
+            try {
+                await api('/api/accessories/led', { method: 'POST', body: new URLSearchParams({ id: item.id, r: 255, g: 255, b: 255 }) });
+                await new Promise(resolve => setTimeout(resolve, 500));
+                await api('/api/accessories/led', { method: 'POST', body: new URLSearchParams({ id: item.id, r: 0, g: 0, b: 0 }) });
+            } catch (error) { /* seguimos con el resto aunque uno falle */ }
+        }
+        await loadWorkshopData({ quiet: true });
+        render();
+    }
+
+    async function duplicateBoard(boardId) {
+        const board = state.boards.find(item => item.id === boardId);
+        const entry = board && catalogEntry(board.catalogId);
+        if (!board || !entry) return toast(tr('errCouldNotAddBoard'), 'error');
+        try {
+            const created = await api('/api/accessories/arduino/boards', {
+                method: 'POST',
+                body: new URLSearchParams({ catalog_id: board.catalogId, name: tr('duplicatedBoardName', { name: board.name }), pins: JSON.stringify(board.pins) }),
+            });
+            state.boards.push({ id: created.id, catalogId: board.catalogId, name: created.name, pins: created.pins, connected: false, showAllPins: true });
+            toast(tr('boardAdded', { name: created.name, label: entry.label }));
+            render();
+        } catch (error) {
+            toast(error.message || tr('errCouldNotAddBoard'), 'error');
+        }
+    }
+
+    function openAllScenesPanel() {
+        root.querySelector('#wsa-allscenes-list').innerHTML = workshopScenesPanel();
+        root.querySelector('#wsa-allscenes-panel').hidden = false;
+    }
+
+    function closeAllScenesPanel() {
+        root.querySelector('#wsa-allscenes-panel').hidden = true;
+    }
+
+    function openDocsAnchor(anchorId) {
+        switchWorkshopView('documentation');
+        setTimeout(() => root.querySelector(`#${anchorId}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
+    }
+
+    async function runDiagnostics() {
+        await loadWorkshopData();
+        const stats = dashboardStats();
+        toast(tr('diagnosticsResult', { online: stats.connectedBoards, total: stats.totalBoards, warnings: stats.warningBoards }));
     }
 
     function viewDocumentation() {
@@ -3105,6 +3568,7 @@ const I18N = {
                 <section id="wsa-doc-safety" class="wsa-doc-card wsa-doc-warning"><small>04</small><h3>${tr('docsSafetyTitle')}</h3><ul><li>${tr('docsSafety1')}</li><li>${tr('docsSafety2')}</li><li>${tr('docsSafety3')}</li><li>${tr('docsSafety4')}</li><li>${tr('docsSafety5')}</li></ul></section>
                 <section id="wsa-doc-services" class="wsa-doc-card"><small>05</small><h3>${tr('docsServicesTitle')}</h3><dl><dt>${tr('docsUsbDetection')}</dt><dd>${tr('docsUsbDetectionValue')}</dd><dt>${tr('docsSerialSpeed')}</dt><dd>115200 ${tr('docsBaud')}</dd><dt>${tr('docsWifiState')}</dt><dd>GET /api/status</dd><dt>${tr('docsHealthCheck')}</dt><dd>GET /health</dd><dt>${tr('docsUpdate')}</dt><dd>ElegantOTA / firmware USB</dd><dt>${tr('docsActiveBoard')}</dt><dd>${esc(board.ip || board.device || tr('docsNoConnectionConfigured'))}</dd></dl></section>
                 <section id="wsa-doc-commands" class="wsa-doc-card"><small>06</small><h3>${tr('docsCommandsTitle')}</h3><div class="wsa-doc-commands"><code>NOPAL:ID?<span>${tr('docsCmdId')}</span></code><code>NOPAL:NET?<span>${tr('docsCmdNet')}</span></code><code>NOPAL:STATUS?<span>${tr('docsCmdStatus')}</span></code><code>NOPAL:R1:ON<span>${tr('docsCmdRelayOn')}</span></code><code>NOPAL:R1:OFF<span>${tr('docsCmdRelayOff')}</span></code><code>NOPAL:WS:255,80,0<span>${tr('docsCmdLedColor')}</span></code><code>NOPAL:SCENE:READY<span>${tr('docsCmdScene')}</span></code><code>NOPAL:ADC?<span>${tr('docsCmdAdc')}</span></code></div></section>
+                <section id="wsa-doc-ha" class="wsa-doc-card"><small>07</small><h3>${tr('docsHaTitle')}</h3><p class="wsa-empty-note">${tr('docsHaBody')}</p><div class="wsa-doc-commands"><code>GET /api/accessories/status<span>${tr('docsHaStatus')}</span></code><code>POST /api/accessories/power<span>${tr('docsHaPower')}</span></code><code>POST /api/accessories/led<span>${tr('docsHaLed')}</span></code><code>POST /api/accessories/scenes/{id}/run<span>${tr('docsHaScene')}</span></code></div></section>
             </div>
         </div>`;
     }
@@ -3177,7 +3641,7 @@ const I18N = {
     function workshopScenesPanel() {
         if (!state.scenes.length) return `<div class="wsa-card wsa-workshop-empty"><h2>${icon(ICON_SCENE, 16)}${tr('subScenes2')}</h2><p>${tr('createSceneHint')}</p><button type="button" class="wsa-btn wsa-btn-accent" id="wsa-scene-new">${icon(ICON_PLUS, 14)}<span>${tr('newSceneWord')}</span></button></div>`;
         return `<section class="wsa-card"><div class="wsa-card-title-row"><h2>${icon(ICON_SCENE, 16)}${tr('quickActions')}</h2><button type="button" class="wsa-btn wsa-btn-small wsa-btn-accent" id="wsa-scene-new">${icon(ICON_PLUS, 13)}<span>${tr('newSceneWord')}</span></button></div>
-            <div class="wsa-workshop-scenes">${state.scenes.map(scene => `<div class="wsa-scene-card"><button type="button" class="wsa-btn" data-wsa-workshop-scene="${esc(scene.id)}">${icon(ICON_ZAP, 14)}<span>${esc(scene.name)}</span><small>${tr('actionCount', { count: scene.actions?.length || 0 })}</small></button><button type="button" class="wsa-card-menu-btn" data-wsa-scene-edit="${esc(scene.id)}" title="${tr('editSceneTitle')}">${icon(ICON_GEAR, 14)}</button></div>`).join('')}</div></section>`;
+            <div class="wsa-workshop-scenes">${state.scenes.map(scene => `<div class="wsa-scene-card"><button type="button" class="wsa-btn" data-wsa-workshop-scene="${esc(scene.id)}">${icon(ICON_ZAP, 14)}<span>${esc(scene.name)}</span>${sceneStateBadge(scene)}<small>${tr('actionCount', { count: scene.actions?.length || 0 })}</small></button><button type="button" class="wsa-card-menu-btn" data-wsa-scene-edit="${esc(scene.id)}" title="${tr('editSceneTitle')}">${icon(ICON_GEAR, 14)}</button></div>`).join('')}</div></section>`;
     }
 
     function workshopLatestActivity() {
@@ -3460,34 +3924,6 @@ const I18N = {
         return cardWrap(tr('activeAutomationsTitle'), ICON_ZAP, rulesTableHtml());
     }
 
-    function viewConsole() {
-        return `<div class="wsa-card"><h2>${icon(ICON_TERMINAL, 16)}${tr('subConsole')}</h2>
-            <div class="wsa-console">${['NOPAL:ID?', 'NOPAL,role=accessory,chip=ESP32,fw=1.4,relays=4,...', 'NOPAL:R1:ON', 'OK'].map(line => `<div>${esc(line)}</div>`).join('')}</div>
-            <p class="wsa-empty-note">${tr('consoleReadOnlyNote')}</p>
-        </div>`;
-    }
-
-    function viewTemplates() {
-        const templates = [
-            { name: tr('tplPrinterBasic'), desc: tr('tplPrinterBasicDesc') },
-            { name: tr('tplLaserStation'), desc: tr('tplLaserStationDesc') },
-            { name: tr('tplCncBeacon'), desc: tr('tplCncBeaconDesc') },
-        ];
-        return `<div class="wsa-card"><h2>${icon(ICON_FOLDER, 16)}${tr('subTemplates')}</h2><p class="wsa-empty-note">${tr('templatesSubtitle')}</p>
-            <div class="wsa-template-list">${templates.map(t => `<div class="wsa-device-row"><span class="wsa-status-dot is-on"></span><div><strong>${esc(t.name)}</strong><small>${esc(t.desc)}</small></div><button type="button" class="wsa-btn">${tr('useBtn')}</button></div>`).join('')}</div>
-        </div>`;
-    }
-
-    function viewAlerts() {
-        const summary = pinSummary(activeBoard());
-        const alerts = [];
-        if (summary.warnings) alerts.push({ tone: 'warning', text: tr('warningMultipleFunctionsPin', { count: summary.warnings, board: activeBoard().name }) });
-        alerts.push({ tone: 'info', text: tr('wifiTransportReflashNote') });
-        return `<div class="wsa-card"><h2>${icon(ICON_BELL, 16)}${tr('subAlerts')}</h2>
-            <div class="wsa-alert-list">${alerts.map(a => `<div class="wsa-alert-row wsa-alert-${a.tone}">${esc(a.text)}</div>`).join('')}</div>
-        </div>`;
-    }
-
     // ============================================================================
     // EVENTOS
     // ============================================================================
@@ -3496,21 +3932,37 @@ const I18N = {
         if (!root) return;
         root.classList.toggle('wsa-dashboard-mode', state.view === 'overview' && !state.wizard.active);
         root.classList.toggle('wsa-docs-mode', state.view === 'documentation' && !state.wizard.active);
-        renderHeaderChips();
-        renderSubnav();
+        renderHeaderStatus();
         renderContent();
-        renderStatusbar();
     }
 
     function bindEvents() {
         root.querySelector('#wsa-close-btn').addEventListener('click', () => window.switchSection?.('dashboard'));
         root.querySelector('#wsa-docs-btn').addEventListener('click', () => switchWorkshopView('documentation'));
-        root.querySelector('#wsa-config-btn').addEventListener('click', () => switchWorkshopView('pines'));
-        root.querySelector('#wsa-manage-header-btn').addEventListener('click', openManageBoardsPanel);
-
-        root.querySelector('#wsa-subnav').addEventListener('click', event => {
-            const btn = event.target.closest('[data-wsa-view]');
-            if (btn) switchWorkshopView(btn.dataset.wsaView);
+        root.querySelector('#wsa-header-addboard-btn').addEventListener('click', () => {
+            state.wizard.active = true;
+            state.wizard.step = 'intro';
+            state.wizard.error = null;
+            render();
+        });
+        root.querySelector('#wsa-scan-boards-btn').addEventListener('click', () => {
+            state.wizard.active = true;
+            state.wizard.error = null;
+            wizardSearch();
+        });
+        root.querySelector('#wsa-manage-header-btn').addEventListener('click', () => { closeHeaderMenu(); openManageBoardsPanel(); });
+        root.querySelector('#wsa-more-menu-btn').addEventListener('click', event => {
+            event.stopPropagation();
+            const menu = root.querySelector('#wsa-more-menu');
+            menu.hidden = !menu.hidden;
+        });
+        document.addEventListener('click', event => {
+            if (!root || !root.querySelector('#wsa-more-menu') || root.querySelector('#wsa-more-menu').hidden) return;
+            if (!event.target.closest('#wsa-more-menu') && !event.target.closest('#wsa-more-menu-btn')) closeHeaderMenu();
+        });
+        root.querySelector('#wsa-more-menu').addEventListener('click', event => {
+            const viewButton = event.target.closest('[data-wsa-view]');
+            if (viewButton) { closeHeaderMenu(); switchWorkshopView(viewButton.dataset.wsaView); }
         });
 
         root.querySelectorAll('[data-wsa-close-manageboards]').forEach(el => el.addEventListener('click', closeManageBoardsPanel));
@@ -3525,6 +3977,15 @@ const I18N = {
             if (ambientCheckbox) setAmbientSensorBoard(ambientCheckbox.dataset.wsaManageboardAmbient, ambientCheckbox.checked);
         });
 
+        root.querySelectorAll('[data-wsa-close-allscenes]').forEach(el => el.addEventListener('click', closeAllScenesPanel));
+        root.querySelector('#wsa-allscenes-list').addEventListener('click', event => {
+            const sceneButton = event.target.closest('[data-wsa-workshop-scene]');
+            if (sceneButton) { runWorkshopScene(sceneButton.dataset.wsaWorkshopScene); return; }
+            if (event.target.closest('#wsa-scene-new')) { openSceneEditor(); return; }
+            const sceneEdit = event.target.closest('[data-wsa-scene-edit]');
+            if (sceneEdit) { openSceneEditor(sceneEdit.dataset.wsaSceneEdit); return; }
+        });
+
         root.querySelector('#wsa-content').addEventListener('click', event => {
             if (!event.target.closest('.wsa-card-menu')) {
                 root.querySelectorAll('.wsa-card-menu-dropdown').forEach(el => { el.hidden = true; });
@@ -3532,6 +3993,7 @@ const I18N = {
             const viewButton = event.target.closest('[data-wsa-view]');
             if (viewButton) { switchWorkshopView(viewButton.dataset.wsaView); return; }
             if (event.target.closest('#wsa-docs-back')) { switchWorkshopView('overview'); return; }
+            if (event.target.closest('#wsa-back-to-dashboard')) { switchWorkshopView('overview'); return; }
             if (event.target.closest('#wsa-docs-open-pinmap')) { switchWorkshopView('pines'); return; }
             const overviewTab = event.target.closest('[data-wsa-overview-tab]');
             if (overviewTab) { state.overviewTab = overviewTab.dataset.wsaOverviewTab; render(); return; }
@@ -3588,6 +4050,34 @@ const I18N = {
             const sceneEdit = event.target.closest('[data-wsa-scene-edit]');
             if (sceneEdit) { openSceneEditor(sceneEdit.dataset.wsaSceneEdit); return; }
 
+            const cardEdit = event.target.closest('[data-wsa-card-edit]');
+            if (cardEdit) { openManageBoardsPanel(); return; }
+            const cardPins = event.target.closest('[data-wsa-card-pins]');
+            if (cardPins) { state.activeBoardId = cardPins.dataset.wsaCardPins; state.selectedPinKey = null; switchWorkshopView('pines'); return; }
+            const cardActions = event.target.closest('[data-wsa-card-actions]');
+            if (cardActions) { state.activeBoardId = cardActions.dataset.wsaCardActions; render(); root.querySelector('#wsa-quickactions-anchor')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
+            const cardDuplicate = event.target.closest('[data-wsa-card-duplicate]');
+            if (cardDuplicate) { duplicateBoard(cardDuplicate.dataset.wsaCardDuplicate); return; }
+            const cardDelete = event.target.closest('[data-wsa-card-delete]');
+            if (cardDelete) { deleteManageBoard(cardDelete.dataset.wsaCardDelete); return; }
+
+            if (event.target.closest('#wsa-boards-viewmode')) { state.boardsViewMode = state.boardsViewMode === 'grid' ? 'list' : 'grid'; render(); return; }
+            if (event.target.closest('#wsa-test-relays-btn')) { testWorkshopRelays(activeBoard()); return; }
+            if (event.target.closest('#wsa-test-leds-btn')) { testWorkshopLeds(activeBoard()); return; }
+            if (event.target.closest('#wsa-test-connection-btn')) { testBoardConnection(state.activeBoardId); return; }
+            if (event.target.closest('#wsa-sync-btn')) { loadWorkshopData(); toast(tr('syncStarted')); return; }
+            if (event.target.closest('#wsa-scenes-viewall')) { openAllScenesPanel(); return; }
+            const resourceLink = event.target.closest('[data-wsa-resource]');
+            if (resourceLink) {
+                const action = resourceLink.dataset.wsaResource;
+                if (action === 'docs-start') openDocsAnchor('wsa-doc-start');
+                else if (action === 'docs-commands') openDocsAnchor('wsa-doc-commands');
+                else if (action === 'docs-services') openDocsAnchor('wsa-doc-services');
+                else if (action === 'docs-ha') openDocsAnchor('wsa-doc-ha');
+                else if (action === 'diagnostics') runDiagnostics();
+                return;
+            }
+
             const boardTab = event.target.closest('[data-wsa-board]');
             if (boardTab) { state.activeBoardId = boardTab.dataset.wsaBoard; state.selectedPinKey = null; render(); return; }
 
@@ -3638,6 +4128,7 @@ const I18N = {
                 setWorkshopAccessoryPower(event.target.dataset.wsaWorkshopPower, event.target.checked);
                 return;
             }
+            if (event.target.id === 'wsa-boards-sort') { state.boardsSort = event.target.value; render(); return; }
             if (event.target.id === 'wsa-inspector-category') { setPendingCategory(event.target.value); return; }
             if (event.target.id === 'wsa-showall-pins') {
                 const board = activeBoard();

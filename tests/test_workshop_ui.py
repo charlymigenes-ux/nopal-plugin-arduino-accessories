@@ -34,8 +34,8 @@ def test_workshop_overview_exposes_approved_sections_and_actions():
 def test_plugin_version_matches_frontend_registry():
     manifest = (PLUGIN_ROOT / "nopal-plugin.json").read_text(encoding="utf-8")
     javascript = (PLUGIN_ROOT / "frontend" / "arduino-accessories.js").read_text(encoding="utf-8")
-    assert '"version": "2.5.2"' in manifest
-    assert "PLUGIN_VERSION = '2.5.2'" in javascript
+    assert '"version": "2.6.0"' in manifest
+    assert "PLUGIN_VERSION = '2.6.0'" in javascript
 
 
 def test_add_board_uses_one_connection_wizard_and_detected_pin_profile():
@@ -51,17 +51,20 @@ def test_add_board_uses_one_connection_wizard_and_detected_pin_profile():
     assert "pins: JSON.stringify(board.pins)" in javascript
 
 
-def test_classic_dashboard_design_keeps_real_controls_and_documentation():
+def test_main_dashboard_design_keeps_real_controls_and_documentation():
+    # El panel principal reemplazó por completo al "classic dashboard" de
+    # pestañas laterales -- ver el plan de rediseño: ahora es una galería de
+    # tarjetas de placas + vista rápida + acciones rápidas + recursos, sin
+    # sidebar. Estos markers son los reales del nuevo diseño.
     javascript = (PLUGIN_ROOT / "frontend" / "arduino-accessories.js").read_text(encoding="utf-8")
     stylesheet = (PLUGIN_ROOT / "frontend" / "arduino-accessories.css").read_text(encoding="utf-8")
     for marker in (
         "Accesorios Arduino/ESP32",
         "Documentación",
-        "Resumen del sistema",
-        "Consumo y voltaje",
-        "Estado de conexión",
-        "Dispositivos y controles",
-        "Actividad reciente",
+        "connectedBoardsTitle: 'Placas conectadas'",
+        "quickViewTitle: 'Vista rápida de la placa seleccionada'",
+        "quickActionsAutomationsTitle: 'Acciones rápidas y automatizaciones'",
+        "resourcesTitle: 'Recursos y ayuda'",
         "Información del dispositivo",
         "Seguridad eléctrica",
         "Comandos NOPAL",
@@ -69,5 +72,6 @@ def test_classic_dashboard_design_keeps_real_controls_and_documentation():
         assert marker in javascript
     assert "data-wsa-workshop-power" in javascript
     assert "data-wsa-workshop-scene" in javascript
-    assert ".wsa-classic-dashboard" in stylesheet
+    assert ".wsa-board-card" in stylesheet
+    assert ".wsa-dash-statbar" in stylesheet
     assert ".wsa-docs-grid" in stylesheet

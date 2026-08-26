@@ -246,6 +246,41 @@ class TestAccessoryScenes:
         response = client.post("/api/accessories/scenes", data={"name": "x", "actions": "[]"})
         assert response.status_code == 403
 
+    def test_toggle_scene_alternates_variants_on_each_run(self, client, as_admin, monkeypatch):
+        entry = _register(client, as_admin)
+        monkeypatch.setattr(accessory_service.requests, "get", lambda url, timeout=None: type("R", (), {"ok": True})())
+
+        variants = json.dumps([
+            {"name": "Encendido", "actions": [{"accessory_id": entry["id"], "on": True}]},
+            {"name": "Apagado", "actions": [{"accessory_id": entry["id"], "on": False}]},
+        ])
+        create_response = client.post(
+            "/api/accessories/scenes",
+            data={"name": "Aro LED", "mode": "toggle", "variants": variants},
+        )
+        assert create_response.status_code == 200
+        scene = create_response.json()
+        assert scene["mode"] == "toggle"
+        assert scene["current_state_name"] == "Encendido"
+
+        # Primera ejecución: pasa al estado siguiente (Apagado), no repite el inicial.
+        client.post(f"/api/accessories/scenes/{scene['id']}/run")
+        after_first = client.get("/api/accessories/scenes").json()["scenes"][0]
+        assert after_first["current_state_name"] == "Apagado"
+
+        # Segunda ejecución: vuelve a Encendido (ciclo cerrado de 2 estados).
+        client.post(f"/api/accessories/scenes/{scene['id']}/run")
+        after_second = client.get("/api/accessories/scenes").json()["scenes"][0]
+        assert after_second["current_state_name"] == "Encendido"
+
+    def test_toggle_scene_requires_at_least_two_variants(self, client, as_admin):
+        variants = json.dumps([{"name": "Solo uno", "actions": [{"accessory_id": "x", "on": True}]}])
+        response = client.post(
+            "/api/accessories/scenes",
+            data={"name": "Incompleta", "mode": "toggle", "variants": variants},
+        )
+        assert response.status_code == 400
+
 
 class TestFirmwareBuilds:
     def test_builds_empty_by_default(self, client, as_operator):

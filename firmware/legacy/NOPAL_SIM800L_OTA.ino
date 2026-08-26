@@ -115,13 +115,8 @@ const uint8_t RELAY_PINS[RELAY_COUNT] = {
 #define SIM800L_TX_PIN MODEM_TX
 #define SIM800L_BAUD 115200
 
-// Se probó activar el pulso de PWRKEY (2026-08-24) para forzar el
-// arranque del módem, pero la placa dejó de responder por completo
-// (ni WiFi ni AP de recuperación, solo LED encendido) -- consistente con
-// que el SIM800L intentó arrancar de verdad (buscar red celular) y el
-// pico de corriente tumbó al ESP32 por bajo voltaje, un problema conocido
-// en placas T-Call con alimentación insuficiente. Se revierte a 0 hasta
-// resolver el tema de alimentación (ver memoria de proyecto).
+// En este hardware el encendido del módem lo resuelve setupModemPower()
+// (MODEM_POWER_ON + boost del IP5306), no un pulso de PWRKEY.
 #define SIM800L_PWRKEY_ENABLE 0
 #define SIM800L_PWRKEY_PIN MODEM_PWRKEY
 #define SIM800L_PWRKEY_ACTIVE_LOW 1
@@ -132,16 +127,6 @@ const uint8_t RELAY_PINS[RELAY_COUNT] = {
 // ============================================================================
 
 WebServer server(HTTP_PORT);
-
-// Compatibilidad con nopal_cluster.h (escrito originalmente para el
-// firmware FF, con otros nombres de símbolo): esta placa no tiene un
-// arreglo RELAY_NAMES ni una función chipModelText() propia, así que se
-// agregan acá sin tocar el resto del firmware.
-String chipSuffix();  // definida más abajo -- ver nota sobre auto-prototipado
-const char* const RELAY_NAMES[RELAY_COUNT] = {"Relé 1", "Relé 2"};
-String chipModelText() { return chipSuffix(); }
-
-#include "nopal_cluster.h"
 
 bool webServerStarted = false;
 bool mdnsStarted = false;
@@ -181,7 +166,6 @@ String recoveryApSsid;
   String lastSimCommand;
   String lastSimResponse;
   uint32_t lastSimActivityMs = 0;
-  bool ip5306PmuOk = false;
 
 #endif
 
@@ -757,9 +741,6 @@ String buildStatusJson() {
   json += "\",";
   json += "\"last_activity_ms\":";
   json += String(lastSimActivityMs);
-  json += ",";
-  json += "\"ip5306_pmu_ok\":";
-  json += ip5306PmuOk ? "true" : "false";
 
 #endif
 
@@ -1130,8 +1111,6 @@ void setupWebServer() {
     NOPAL_OTA_PASSWORD
   );
 
-  NopalCluster::registerHttpRoutes();
-
   ElegantOTA.begin(&server);
 
   server.begin();
@@ -1146,8 +1125,6 @@ void setupWebServer() {
 
 void serviceNetwork() {
   maintainWifiConnection();
-
-  NopalCluster::service();
 
   if (webServerStarted) {
     server.handleClient();
@@ -1180,13 +1157,7 @@ void setupModemPower() {
 
   // Mantener el boost de 5V del IP5306 encendido; sin esto el SIM800L
   // pierde alimentación bajo carga y deja de responder a comandos AT.
-  // setupPMU() nunca chequeaba su propio resultado -- si el I2C hacia el
-  // IP5306 falla, el boost puede autoapagarse por baja carga sin que nos
-  // enteremos. Se registra explícitamente para diagnosticar el TIMEOUT
-  // del SIM800L.
-  ip5306PmuOk = setupPMU();
-  Serial.print("NOPAL:IP5306_PMU,ok=");
-  Serial.println(ip5306PmuOk ? "1" : "0");
+  setupPMU();
 }
 
 #endif
@@ -1690,7 +1661,6 @@ void setup() {
 
   setupWifi();
   setupWebServer();
-  NopalCluster::setup();
 
   delay(100);
 

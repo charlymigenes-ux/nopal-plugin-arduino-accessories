@@ -54,88 +54,13 @@
     flex-shrink: 0;
 }
 .wsa-btn-icon:hover { border-color: rgba(var(--wsa-accent-rgb), .5); color: var(--wsa-accent); }
-.wsa-header-chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-    flex-shrink: 1;
-}
-.wsa-chip {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    padding: 6px 12px;
-    border: 1px solid var(--wsa-border);
-    border-radius: 10px;
-    background: var(--wsa-control);
-    min-width: 132px;
-}
-.wsa-chip label { font-size: .68rem; letter-spacing: .03em; color: var(--text-muted); display: flex; align-items: center; gap: 4px; text-transform: uppercase; }
-.wsa-chip strong { font-size: .9rem; color: var(--text); }
-.wsa-chip small { font-size: .74rem; color: var(--text-muted); }
-.wsa-chip-alert strong { color: #f59e0b; }
-
-/* ── Layout de dos paneles (mismo patrón que .help-center-layout) ── */
+/* ── Layout de una sola columna a lo ancho (sin sidebar) ── */
 .wsa-layout {
     flex: 1;
     min-height: 0;
-    display: grid;
-    grid-template-columns: 250px 1fr;
-    gap: 0;
-    overflow: hidden;
+    display: block;
+    overflow: auto;
 }
-.wsa-sidebar {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    padding: 16px 12px;
-    border-right: 1px solid var(--wsa-border);
-    overflow-y: auto;
-}
-.wsa-subnav { display: flex; flex-direction: column; gap: 3px; flex: 1; }
-.wsa-subnav-item {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 9px 10px;
-    border-radius: 10px;
-    border: 1px solid transparent;
-    background: none;
-    color: var(--text-secondary);
-    font-size: .85rem;
-    text-align: left;
-    cursor: pointer;
-    position: relative;
-}
-.wsa-subnav-item:hover { background: var(--wsa-control); }
-.wsa-subnav-item.active {
-    background: rgba(var(--wsa-accent-rgb), .12);
-    border-color: color-mix(in srgb, var(--wsa-accent) 45%, transparent);
-    color: var(--text);
-}
-.wsa-nav-badge {
-    margin-left: auto;
-    font-size: .6rem;
-    font-weight: 700;
-    padding: 2px 6px;
-    border-radius: 999px;
-    background: rgba(var(--wsa-accent-rgb), .2);
-    color: var(--wsa-accent);
-    font-style: normal;
-}
-.wsa-profile-card {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    padding: 10px 12px;
-    border: 1px solid var(--wsa-border);
-    border-radius: 10px;
-    background: var(--wsa-control);
-}
-.wsa-profile-card strong { display: block; font-size: .82rem; color: var(--text); }
-.wsa-profile-card small { font-size: .72rem; color: var(--text-muted); }
-
 .wsa-content {
     padding: 20px 24px 40px;
     overflow-y: auto;
@@ -542,12 +467,46 @@
 .wsa-workshop-sensors span, .wsa-workshop-sensors small { color: var(--text-muted); font-size: .72rem; }
 .wsa-workshop-sensors strong { color: var(--text); font-size: .9rem; }
 .wsa-workshop-scenes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-.wsa-workshop-scenes .wsa-btn { width: 100%; justify-content: flex-start; }
-.wsa-workshop-scenes .wsa-btn span { flex: 1; text-align: left; }
-.wsa-workshop-scenes .wsa-btn small { color: var(--text-muted); }
+/* El botón de escena lleva hasta 4 cosas: ícono, nombre, badge de estado
+   (solo en escenas toggle/cycle) y conteo de acciones. En una sola fila se
+   encimaban al angostarse el contenedor -- se notaba sobre todo en el modal
+   "Todas las escenas", más estrecho que el panel. Se acomodan en un grid de
+   dos renglones: nombre + badge arriba, conteo abajo.
+   El badge también es un <small>, así que las reglas van por clase. */
+.wsa-workshop-scenes .wsa-btn {
+    width: 100%;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 2px 8px;
+    text-align: left;
+    padding: 9px 11px;
+}
+.wsa-workshop-scenes .wsa-btn > svg { grid-row: 1 / span 2; align-self: center; }
+.wsa-workshop-scenes .wsa-btn > span {
+    grid-column: 2;
+    grid-row: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.wsa-workshop-scenes .wsa-btn > .wsa-scene-state-badge {
+    grid-column: 3;
+    grid-row: 1;
+    justify-self: end;
+    white-space: nowrap;
+}
+.wsa-workshop-scenes .wsa-btn > small:not(.wsa-scene-state-badge) {
+    grid-column: 2 / span 2;
+    grid-row: 2;
+    color: var(--text-muted);
+    font-size: .7rem;
+    line-height: 1.25;
+}
 .wsa-scene-card { display: flex; align-items: stretch; gap: 6px; min-width: 0; }
 .wsa-scene-card .wsa-btn { flex: 1; min-width: 0; }
-.wsa-scene-card .wsa-card-menu-btn { flex-shrink: 0; }
+.wsa-scene-card .wsa-card-menu-btn { flex-shrink: 0; align-self: center; }
 .wsa-workshop-empty { text-align: center; }
 .wsa-workshop-empty h2 { justify-content: center; }
 .wsa-workshop-loading { display: flex; align-items: center; justify-content: center; gap: 12px; min-height: 120px; }
@@ -809,9 +768,7 @@
     .wsa-workshop-table th:nth-child(2), .wsa-workshop-table td:nth-child(2) { display: none; }
 }
 
-/* ── Panel principal clásico ──────────────────────────────────────────────
-   Recupera la composición aprobada del prototipo Arduino/ESP32. Los datos
-   y controles siguen viniendo de los endpoints reales del plugin. */
+/* ── Encabezado del panel principal ── */
 .wsa-header { padding: 18px 20px 12px; }
 .wsa-header-icon { width: 62px; height: 62px; border-radius: 16px; color: #67ec58; background: #0c2415; }
 .wsa-header-copy { flex: 0 1 auto; }
@@ -820,63 +777,72 @@
 .wsa-header-sub strong { color: #57e04b; }
 .wsa-header-online { display: inline-flex; align-items: center; gap: 8px; margin-right: auto; padding: 8px 12px; border: 1px solid var(--wsa-border); border-radius: 10px; color: var(--text-muted); background: var(--wsa-control); font-size: .78rem; }
 .wsa-header-online.is-online { color: #57e04b; border-color: #1f6e32; background: #0c2817; }
-.wsa-header-actions { display: flex; align-items: center; gap: 9px; margin-left: auto; }
+.wsa-header-actions { display: flex; align-items: center; gap: 9px; margin-left: auto; position: relative; }
 .wsa-header-actions .wsa-btn { min-height: 38px; font-weight: 650; }
-.wsa-header-chips { order: 7; flex-basis: 100%; justify-content: flex-end; }
+.wsa-header-actions .wsa-card-menu-dropdown { top: calc(100% + 8px); }
 .wsa-header > #wsa-close-btn { order: 6; border: 0; background: transparent; }
-.wsa-chip { min-width: 0; flex-direction: row; align-items: center; gap: 8px; padding: 8px 10px; }
-.wsa-chip label { text-transform: none; font-size: .7rem; }
-.wsa-chip strong { color: #57e04b; font-size: .78rem; }
 
-.wsa-dashboard-mode .wsa-sidebar,
-.wsa-dashboard-mode .wsa-statusbar,
-.wsa-docs-mode .wsa-sidebar,
-.wsa-docs-mode .wsa-statusbar { display: none; }
-.wsa-dashboard-mode .wsa-layout,
-.wsa-docs-mode .wsa-layout { display: block; overflow: auto; }
-.wsa-dashboard-mode .wsa-content { padding: 12px; }
 .wsa-docs-mode .wsa-content { padding: 18px 24px 36px; }
+.wsa-back-to-dashboard { margin-bottom: 14px; }
 
-.wsa-classic-dashboard { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(300px, 1.05fr) minmax(300px, 1fr); gap: 10px; color: var(--text); }
-.wsa-classic-panel { min-width: 0; overflow: hidden; padding: 15px 16px; border: 1px solid var(--wsa-border); border-radius: 11px; background: linear-gradient(135deg, color-mix(in srgb, var(--card-bg) 96%, #0b1820), color-mix(in srgb, var(--panel-bg) 96%, #071016)); }
-.wsa-classic-panel h2 { display: flex; align-items: center; gap: 9px; margin: 0 0 14px; font-size: .88rem; color: var(--text); }
-.wsa-classic-panel h2 svg { color: #57e04b; }
-.wsa-classic-summary { grid-column: 1; }
-.wsa-classic-power { grid-column: 2; }
-.wsa-classic-connection { grid-column: 3; }
-.wsa-classic-controls { grid-column: 1 / 3; }
-.wsa-classic-activity { grid-column: 3; }
-.wsa-classic-scenes { grid-column: 1 / 3; }
-.wsa-classic-device { grid-column: 3; }
-.wsa-classic-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; }
-.wsa-classic-metrics article { min-height: 132px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; padding: 10px; border: 1px solid var(--wsa-border); border-radius: 9px; background: var(--wsa-control); text-align: center; }
-.wsa-classic-metrics article > svg { color: #57e04b; }
-.wsa-classic-metrics article.is-yellow > svg { color: #f8bd19; }
-.wsa-classic-metrics article.is-blue > svg { color: #29a9ef; }
-.wsa-classic-metrics article.is-purple > svg { color: #ae59ef; }
-.wsa-classic-metrics strong { font-size: 1.35rem; color: var(--text); }
-.wsa-classic-metrics strong.is-word { font-size: 1.05rem; }
-.wsa-classic-metrics span { color: var(--text-secondary); font-size: .76rem; }
-.wsa-classic-metrics small { color: #57e04b; font-size: .68rem; }
-.wsa-classic-power-values { display: grid; grid-template-columns: 1fr 1fr; margin: 7px 10px 20px; }
-.wsa-classic-power-values > div { display: flex; flex-direction: column; gap: 7px; }
-.wsa-classic-power-values > div + div { padding-left: 20px; border-left: 1px solid var(--wsa-border); }
-.wsa-classic-power-values span, .wsa-classic-power > p { color: var(--text-muted); font-size: .69rem; }
-.wsa-classic-power-values strong { font-size: 1.35rem; }
-.wsa-classic-power-values small { color: #57e04b; }
-.wsa-classic-signal { height: 54px; display: flex; align-items: end; border-block: 1px solid var(--wsa-border); background: repeating-linear-gradient(to right, transparent 0 39px, color-mix(in srgb, var(--wsa-border) 50%, transparent) 40px); }
-.wsa-classic-signal i { display: block; min-width: 2px; height: 2px; margin-bottom: 16px; background: #57e04b; box-shadow: 0 0 8px #57e04b; transition: width .2s; }
-.wsa-classic-power > p { margin: 9px 0 0; }
-.wsa-classic-connection ul, .wsa-classic-activity ul { list-style: none; margin: 0 0 15px; padding: 0; }
-.wsa-classic-connection li { display: grid; grid-template-columns: 9px 1fr auto; align-items: center; gap: 8px; margin: 0 0 12px; font-size: .72rem; }
-.wsa-classic-connection li > i, .wsa-classic-control-footer i { width: 8px; height: 8px; border-radius: 50%; background: #667681; }
-.wsa-classic-connection li > i.on, .wsa-classic-control-footer i.on { background: #57e04b; box-shadow: 0 0 8px #57e04b88; }
-.wsa-classic-connection li strong { color: #57e04b; font-weight: 550; }
-.wsa-classic-panel-head { display: flex; justify-content: space-between; align-items: flex-start; }
+/* ── Panel principal: barra de stats ── */
+.wsa-dashboard { display: flex; flex-direction: column; gap: 16px; }
+.wsa-dash-statbar { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+.wsa-dash-stat { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 12px 8px; border: 1px solid var(--wsa-border); border-radius: 12px; background: var(--wsa-card); text-align: center; }
+.wsa-dash-stat svg { color: var(--wsa-accent); }
+.wsa-dash-stat strong { font-size: 1.15rem; color: var(--text); }
+.wsa-dash-stat span { font-size: .68rem; color: var(--text-muted); }
+.wsa-dash-stat.is-warning svg, .wsa-dash-stat.is-warning strong { color: #f59e0b; }
+
+/* ── Galería de tarjetas de placas ── */
+.wsa-dash-boards-tools { display: flex; align-items: center; gap: 10px; }
+.wsa-dash-sort { display: flex; align-items: center; gap: 6px; font-size: .74rem; color: var(--text-muted); }
+.wsa-dash-sort select { padding: 5px 8px; border: 1px solid var(--wsa-border); border-radius: 8px; background: var(--wsa-control); color: var(--text); font-size: .78rem; }
+.wsa-status-pill-is-warning, .wsa-status-pill.wsa-status-pill-is-warning { display: inline-flex; align-items: center; gap: 4px; background: rgba(245, 158, 11, .16); color: #f59e0b; margin-left: 8px; }
+.wsa-board-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+.wsa-board-grid.is-list { grid-template-columns: 1fr; }
+.wsa-board-card { display: flex; flex-direction: column; gap: 10px; padding: 14px; border: 1px solid var(--wsa-border); border-radius: 12px; background: var(--wsa-control); cursor: pointer; }
+.wsa-board-card.is-selected { border-color: var(--wsa-accent); box-shadow: 0 0 0 1px var(--wsa-accent); }
+.wsa-board-card.is-online { border-color: color-mix(in srgb, var(--wsa-accent) 35%, var(--wsa-border)); }
+.wsa-board-card.is-warning { border-color: rgba(245, 158, 11, .45); }
+.wsa-board-card-media { height: 74px; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.wsa-board-card-media svg, .wsa-board-card-media img { max-height: 100%; }
+.wsa-board-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.wsa-board-card-head strong { display: block; font-size: .86rem; color: var(--text); }
+.wsa-board-card-head small { display: block; color: var(--text-muted); font-size: .68rem; }
+.wsa-status-pill-is-online { background: rgba(var(--wsa-accent-rgb), .16); color: var(--wsa-accent); }
+.wsa-status-pill-is-warning { background: rgba(245, 158, 11, .16); color: #f59e0b; }
+.wsa-status-pill-is-offline { background: var(--wsa-panel); color: var(--text-muted); }
+.wsa-board-card-meta { display: flex; flex-wrap: wrap; gap: 10px; font-size: .7rem; color: var(--text-muted); }
+.wsa-board-card-meta span { display: flex; align-items: center; gap: 4px; }
+.wsa-board-card-activity { display: flex; align-items: center; gap: 6px; font-size: .72rem; color: var(--text-secondary); padding: 6px 8px; border-radius: 8px; background: var(--wsa-panel); }
+.wsa-board-activity-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-muted); flex-shrink: 0; }
+.wsa-board-activity-dot.is-on { background: var(--wsa-accent); box-shadow: 0 0 6px rgba(var(--wsa-accent-rgb), .6); }
+.wsa-board-activity-dot.is-off { background: #667681; }
+.wsa-board-card-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; text-align: center; }
+.wsa-board-card-stats div { padding: 6px 2px; border-radius: 8px; background: var(--wsa-panel); }
+.wsa-board-card-stats strong { display: block; font-size: .88rem; color: var(--text); }
+.wsa-board-card-stats span { font-size: .62rem; color: var(--text-muted); }
+.wsa-board-card-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.wsa-board-card-actions .wsa-btn { flex: 1; justify-content: center; min-width: 0; }
+.wsa-board-grid.is-list .wsa-board-card { flex-direction: row; align-items: center; flex-wrap: wrap; }
+.wsa-board-grid.is-list .wsa-board-card-media { width: 60px; height: 50px; flex-shrink: 0; }
+
+/* ── Vista rápida + acciones rápidas ── */
+.wsa-dash-lower { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(280px, 1fr); gap: 14px; }
+.wsa-quickview-body { display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: 16px; }
+.wsa-quickview-media { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; }
+.wsa-quickview-media svg, .wsa-quickview-media img { max-width: 100%; }
+.wsa-quickview-state { display: inline-flex; align-items: center; gap: 6px; font-size: .74rem; color: var(--text-secondary); }
+.wsa-quickview-main { min-width: 0; }
 .wsa-classic-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 13px; }
 .wsa-classic-tabs button { padding: 6px 13px; border: 1px solid var(--wsa-border); border-radius: 20px; background: transparent; color: var(--text-muted); cursor: pointer; font-size: .72rem; }
-.wsa-classic-tabs button.active { color: #57e04b; border-color: #26733a; background: #0d2a1b; }
-.wsa-classic-relays { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; }
+.wsa-classic-tabs button.active { color: var(--wsa-accent); border-color: color-mix(in srgb, var(--wsa-accent) 45%, transparent); background: rgba(var(--wsa-accent-rgb), .12); }
+.wsa-quickview-pinlist { display: flex; flex-direction: column; gap: 6px; max-height: 280px; overflow-y: auto; }
+.wsa-quickview-pinlist > div { display: grid; grid-template-columns: 60px 1fr auto; align-items: center; gap: 8px; font-size: .74rem; }
+.wsa-quickview-pinlist em { color: var(--text-muted); font-style: normal; font-size: .68rem; }
+.wsa-quickview-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--wsa-border); }
+.wsa-classic-relays { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
 .wsa-classic-relays article { min-width: 0; display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; align-items: center; gap: 8px; min-height: 58px; padding: 8px 10px; border: 1px solid var(--wsa-border); border-radius: 8px; background: var(--wsa-control); }
 .wsa-classic-relays article > svg { color: #91a1ac; }
 .wsa-classic-relays p { min-width: 0; display: flex; flex-direction: column; gap: 4px; margin: 0; }
@@ -889,22 +855,27 @@
 .wsa-classic-control-footer span { display: flex; align-items: center; gap: 7px; }
 .wsa-classic-control-footer button { margin-left: auto; }
 .wsa-classic-loading, .wsa-classic-empty { min-height: 112px; display: flex; align-items: center; justify-content: center; gap: 10px; color: var(--text-muted); }
-.wsa-classic-telemetry { display: grid; grid-template-columns: repeat(4, 1fr); gap: 9px; }
-.wsa-classic-telemetry article { min-height: 112px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; border: 1px solid var(--wsa-border); border-radius: 8px; background: var(--wsa-control); text-align: center; }
+.wsa-classic-telemetry { display: grid; grid-template-columns: repeat(2, 1fr); gap: 9px; }
+.wsa-classic-telemetry article { min-height: 96px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; border: 1px solid var(--wsa-border); border-radius: 8px; background: var(--wsa-control); text-align: center; }
 .wsa-classic-telemetry span, .wsa-classic-telemetry small { color: var(--text-muted); font-size: .68rem; }
-.wsa-classic-activity li { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; gap: 8px; margin-bottom: 12px; font-size: .69rem; }
-.wsa-classic-activity li svg { color: #8998a3; }
-.wsa-classic-activity time { color: var(--text-muted); font-size: .64rem; }
-.wsa-scene-list { display: flex; flex-wrap: wrap; gap: 7px; }
-.wsa-scene-row { display: flex; align-items: stretch; gap: 6px; }
-.wsa-scene-row .wsa-btn { width: auto; }
-.wsa-classic-device-body { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-.wsa-classic-device dl { display: grid; grid-template-columns: auto 1fr; gap: 7px 10px; margin: 0; padding-right: 12px; border-right: 1px solid var(--wsa-border); font-size: .67rem; }
-.wsa-classic-device dt, .wsa-classic-device-body > div span { color: var(--text-muted); }
-.wsa-classic-device dd { margin: 0; overflow-wrap: anywhere; }
-.wsa-classic-device-body > div { display: flex; flex-direction: column; gap: 6px; font-size: .67rem; }
-.wsa-classic-device-body > div i { height: 5px; margin-bottom: 5px; border-radius: 5px; background: var(--wsa-border); overflow: hidden; }
-.wsa-classic-device-body > div em { display: block; height: 100%; background: #57e04b; }
+.wsa-scene-list { display: flex; flex-direction: column; gap: 7px; }
+.wsa-scene-row { display: flex; align-items: center; gap: 8px; }
+.wsa-scene-row .wsa-btn { width: auto; flex-shrink: 0; }
+.wsa-scene-row small { flex: 1; }
+
+.wsa-quickactions-block h3, .wsa-card-title-row h3 { margin: 0 0 8px; font-size: .82rem; color: var(--text); }
+.wsa-quickactions-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 16px; }
+.wsa-quickactions-grid .wsa-btn { justify-content: center; }
+
+/* ── Recursos y ayuda ── */
+.wsa-resources-footer { padding: 16px 20px; border: 1px solid var(--wsa-border); border-radius: var(--radius-lg, 14px); background: var(--wsa-card); }
+.wsa-resources-footer h2 { margin: 0 0 12px; font-size: .88rem; color: var(--text); }
+.wsa-resources-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+.wsa-resource-link { display: flex; align-items: center; gap: 10px; padding: 10px; border: 1px solid var(--wsa-border); border-radius: 10px; background: var(--wsa-control); color: var(--text-secondary); cursor: pointer; text-align: left; }
+.wsa-resource-link:hover { border-color: rgba(var(--wsa-accent-rgb), .5); }
+.wsa-resource-link svg { flex-shrink: 0; color: var(--wsa-accent); }
+.wsa-resource-link strong { display: block; font-size: .78rem; color: var(--text); }
+.wsa-resource-link small { color: var(--text-muted); font-size: .68rem; }
 
 /* ── Documentación integrada ── */
 .wsa-docs { max-width: 1280px; width: 100%; margin: 0 auto; }
@@ -960,6 +931,19 @@
 .wsa-scene-action-row input[type="color"] { width: 100%; height: 34px; padding: 3px; }
 .wsa-scene-action-row input[type="color"][hidden] { display: block; visibility: hidden; pointer-events: none; }
 @media (max-width: 620px) { .wsa-scene-action-row { grid-template-columns: 1fr 1fr; grid-template-rows: auto auto; } .wsa-scene-action-row input[type="color"] { grid-column: 1; } .wsa-scene-action-row [data-scene-action-remove] { grid-column: 2; justify-self: end; } }
+
+/* Modo de la escena (normal/doble/múltiple) + un bloque por estado en modo
+   doble/múltiple -- ver openSceneEditor/sceneVariantBlockHtml en
+   arduino-accessories.js. */
+.wsa-scene-mode-field { margin-bottom: 14px; }
+.wsa-scene-mode-label { display: block; font-size: .72rem; color: var(--text-secondary); margin-bottom: 6px; }
+.wsa-scene-variant { padding: 12px; border: 1px solid var(--wsa-border); border-radius: 10px; background: var(--wsa-control); margin-bottom: 10px; }
+.wsa-scene-variant-header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.wsa-scene-variant-header input[type="text"] { flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid var(--wsa-border); border-radius: 8px; background: var(--wsa-panel); color: var(--text); font-weight: 600; }
+
+/* Estado activo de una escena doble/múltiple, junto al nombre en cualquier
+   lugar donde se muestre el botón de la escena (ver sceneStateBadge). */
+.wsa-scene-state-badge { padding: 2px 7px; border-radius: 999px; background: rgba(34, 197, 94, .16); color: #22c55e; font-size: .66rem; font-weight: 700; }
 .wsa-workshop-light-toolbar { margin-bottom: 10px; }
 .wsa-led-presets { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
 .wsa-led-presets button { padding: 6px 4px; border: 1px solid var(--wsa-border); border-radius: 7px; background: var(--wsa-control); color: var(--text-secondary); cursor: pointer; font-size: .65rem; }
@@ -967,18 +951,85 @@
 @media (max-width: 620px) { .wsa-lighting-grid { grid-template-columns: 1fr; } .wsa-lighting-credentials { grid-template-columns: 1fr; } }
 
 @media (max-width: 1200px) {
-    .wsa-classic-dashboard { grid-template-columns: 1.4fr 1fr; }
-    .wsa-classic-summary, .wsa-classic-controls, .wsa-classic-scenes { grid-column: 1; }
-    .wsa-classic-power, .wsa-classic-connection, .wsa-classic-activity, .wsa-classic-device { grid-column: 2; }
-    .wsa-classic-relays { grid-template-columns: repeat(2, 1fr); }
+    .wsa-dash-lower { grid-template-columns: 1fr; }
+    .wsa-quickview-body { grid-template-columns: 120px minmax(0, 1fr); }
 }
 @media (max-width: 760px) {
-    .wsa-header-actions { order: 7; width: 100%; }
-    .wsa-header-chips { order: 8; justify-content: flex-start; }
-    .wsa-classic-dashboard { grid-template-columns: 1fr; }
-    .wsa-classic-dashboard > * { grid-column: 1; }
-    .wsa-classic-metrics { grid-template-columns: repeat(2, 1fr); }
+    .wsa-header-actions { order: 7; width: 100%; flex-wrap: wrap; }
+    .wsa-quickview-body { grid-template-columns: 1fr; }
+    .wsa-quickview-media { flex-direction: row; justify-content: center; }
+    .wsa-board-card-stats { grid-template-columns: repeat(2, 1fr); }
+    .wsa-quickactions-grid { grid-template-columns: 1fr; }
     .wsa-docs-grid { grid-template-columns: 1fr; }
     .wsa-doc-wide { grid-column: 1; }
     .wsa-doc-card ol, .wsa-doc-features { grid-template-columns: 1fr; }
+}
+
+/* ---------------------------------------------------------------------------
+   Aviso de NOPAL Intelligence en el editor de escenas
+   ---------------------------------------------------------------------------
+   Solo se pinta cuando la IA NO está activada (state.aiAvailable === false):
+   es una invitación discreta, no un bloqueo -- el editor de escenas funciona
+   igual sin ella. Usa el acento del tema, como el resto del plugin, para que
+   se lea como parte de NOPAL y no como un anuncio pegado.
+*/
+.wsa-ai-hint {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin: 2px 0 10px;
+    padding: 11px 13px;
+    border: 1px solid rgba(var(--wsa-accent-rgb), .35);
+    border-radius: 12px;
+    background: rgba(var(--wsa-accent-rgb), .09);
+}
+
+.wsa-ai-hint-body {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    flex: 1 1 220px;
+    min-width: 0;
+}
+
+.wsa-ai-hint-body strong {
+    font-size: .84rem;
+    color: var(--wsa-accent);
+}
+
+.wsa-ai-hint-body small {
+    font-size: .76rem;
+    line-height: 1.4;
+    color: var(--text-muted);
+}
+
+.wsa-ai-hint .wsa-btn {
+    flex: 0 0 auto;
+    text-decoration: none;
+}
+
+/* ---------------------------------------------------------------------------
+   Modal "Todas las escenas"
+   ---------------------------------------------------------------------------
+   Reutiliza .wsa-manageboards-dialog (560px), pensado para una lista vertical
+   de placas -- pero adentro va la rejilla de escenas a 3 columnas, que a ese
+   ancho deja cada tarjeta en ~170px y encima obliga a truncar el nombre. Se
+   le da su propio ancho y se deja que la rejilla se acomode sola según quepa.
+*/
+#wsa-allscenes-panel .wsa-manageboards-dialog {
+    width: min(760px, 94vw);
+}
+
+#wsa-allscenes-panel .wsa-workshop-scenes {
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+}
+
+/* La lista puede crecer más que la ventana (el diálogo ya tiene max-height:
+   80vh y overflow oculto) -- sin esto las escenas de más quedan cortadas y
+   sin forma de llegar a ellas. */
+#wsa-allscenes-list {
+    overflow-y: auto;
+    max-height: calc(80vh - 150px);
+    padding: 0 2px 2px;
 }

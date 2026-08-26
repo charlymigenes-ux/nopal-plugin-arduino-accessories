@@ -2,11 +2,11 @@ import asyncio
 import json
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 from backend.auth_deps import require_auth, require_role
-from .services import accessory_scenes, machine_led_automation
+from .services import accessory_scenes, cluster_events, machine_led_automation
 from .services.accessory_service import (
     discover_arduino_boards,
     get_accessory_connection,
@@ -443,20 +443,37 @@ async def accessory_scenes_list_endpoint(user: dict = Depends(require_auth)):
     return {"scenes": accessory_scenes.get_scenes()}
 
 
+def _parse_scene_payload(actions: Optional[str], variants: Optional[str]):
+    """`actions` (modo normal): JSON, lista de {"accessory_id", "on"} o
+    {"accessory_id", "color": [r, g, b]}. `variants` (modo toggle/cycle):
+    JSON, lista de {"name", "actions": [...]}. Solo uno de los dos aplica
+    según `mode` -- accessory_scenes valida cuál hace falta."""
+    actions_list = None
+    if actions:
+        try:
+            actions_list = json.loads(actions)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="El campo 'actions' no es un JSON válido")
+    variants_list = None
+    if variants:
+        try:
+            variants_list = json.loads(variants)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="El campo 'variants' no es un JSON válido")
+    return actions_list, variants_list
+
+
 @router.post("/api/accessories/scenes")
 async def accessory_scenes_create_endpoint(
     name: str = Form(...),
-    actions: str = Form(...),
+    mode: str = Form("normal"),
+    actions: Optional[str] = Form(None),
+    variants: Optional[str] = Form(None),
     user: dict = Depends(require_role("admin")),
 ):
-    """`actions` es un JSON: lista de {"accessory_id", "on"} o
-    {"accessory_id", "color": [r, g, b]}."""
+    actions_list, variants_list = _parse_scene_payload(actions, variants)
     try:
-        actions_list = json.loads(actions)
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="El campo 'actions' no es un JSON válido")
-    try:
-        scene = accessory_scenes.create_scene(name, actions_list)
+        scene = accessory_scenes.create_scene(name, mode=mode, actions=actions_list, variants=variants_list)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return scene
@@ -466,16 +483,15 @@ async def accessory_scenes_create_endpoint(
 async def accessory_scenes_update_endpoint(
     scene_id: str,
     name: str = Form(...),
-    actions: str = Form(...),
+    mode: str = Form("normal"),
+    actions: Optional[str] = Form(None),
+    variants: Optional[str] = Form(None),
     user: dict = Depends(require_role("admin")),
 ):
     """Igual que el POST de creación pero sobre una escena existente."""
+    actions_list, variants_list = _parse_scene_payload(actions, variants)
     try:
-        actions_list = json.loads(actions)
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="El campo 'actions' no es un JSON válido")
-    try:
-        scene = accessory_scenes.update_scene(scene_id, name, actions_list)
+        scene = accessory_scenes.update_scene(scene_id, name, mode=mode, actions=actions_list, variants=variants_list)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except KeyError:
@@ -656,3 +672,62 @@ async def accessory_firmware_flash_ota_for_endpoint(
     if not result.get("success"):
         raise HTTPException(status_code=502, detail=result.get("error") or "Fallo al flashear por OTA")
     return result
+
+
+# ── Avisos del clúster de placas ──
+#
+# Ver el docstring de services/cluster_events.py: acá NOPAL no sondea, la
+# placa maestra avisa. Es el único endpoint de este plugin SIN sesión --
+# quien llama es un ESP32, que no tiene cookies ni usuario.
+
+@router.post("/api/accessories/cluster/event")
+async def cluster_event_endpoint(
+    event: str = Form(...),
+    mac: str = Form(""),
+    address: str = Form(""),
+    x_nopal_token: Optional[str] = Header(None),
+):
+    """Aviso de la placa maestra: una placa entró (o salió) del clúster.
+
+    Sin `require_auth` a propósito -- lo llama el firmware, no un
+    navegador. Va autenticado con el token compartido en la cabecera
+    X-NOPAL-Token (ver cluster_events.token_is_valid).
+
+    Los errores del lado de la pantalla NO se propagan: al firmware solo le
+    importa saber si el aviso se recibió, y un 500 acá lo dejaría
+    reintentando un anuncio que nunca va a funcionar.
+    """
+    if not cluster_events.token_is_valid(x_nopal_token):
+        raise HTTPException(status_code=401, detail="Token de clúster inválido")
+
+    try:
+        return await asyncio.to_thread(
+            cluster_events.handle_event, event, mac or None, address or None
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/api/accessories/cluster/config")
+async def cluster_config_get_endpoint(user: dict = Depends(require_auth)):
+    """Config de los avisos, token incluido: el usuario lo necesita para
+    copiarlo al secrets.h de cada placa."""
+    return cluster_events.public_config()
+
+
+@router.post("/api/accessories/cluster/config")
+async def cluster_config_set_endpoint(
+    payload: dict,
+    user: dict = Depends(require_role("admin")),
+):
+    try:
+        return cluster_events.update_config(payload)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/api/accessories/cluster/config/rotate-token")
+async def cluster_rotate_token_endpoint(user: dict = Depends(require_role("admin"))):
+    """Token nuevo. Deja fuera a todas las placas hasta que se actualice su
+    secrets.h -- es intencional, es lo que lo hace revocable."""
+    return cluster_events.rotate_token()

@@ -9,7 +9,8 @@ bootloader+partición+app pensado para escribirse completo en el offset
 
 - Por USB, con esptool (biblioteca Python, sin toolchain de compilación).
 - Por OTA, subiendo el binario al ElegantOTA que ya corre en el firmware
-  1.3+ (ver firmware/nopal_accessory/nopal_accessory.ino).
+  1.3+ (ver firmware/nopal_accessory/nopal_accessory.ino, dentro del repo
+  de este plugin).
 """
 
 from __future__ import annotations
@@ -26,8 +27,19 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-BUILDS_DIR = Path("firmware/nopal_accessory/builds")
-INO_SOURCE_PATH = Path("firmware/nopal_accessory/nopal_accessory.ino")
+# El .ino fuente es código del plugin, así que vive dentro del repo del
+# plugin y se resuelve relativo a este archivo -- no relativo al cwd del
+# servidor, como sí se hace con el estado de instancia. Antes apuntaba a
+# firmware/nopal_accessory/ en la raíz del repo core, que ya no existe:
+# el firmware se consolidó acá para que NOPAL core no cargue código de un
+# plugin.
+INO_SOURCE_PATH = Path(__file__).resolve().parents[2] / "firmware" / "nopal_accessory" / "nopal_accessory.ino"
+
+# Los .bin sí son estado de cada instalación (los sube el usuario desde el
+# panel, pesan varios MB y no se versionan), así que van bajo data/ con el
+# resto del estado del plugin -- ruta relativa al cwd del servidor, igual
+# que scenes.json y activity_log.json.
+BUILDS_DIR = Path("data/accessories/firmware_builds")
 
 # Velocidad de flasheo por USB. Si el adaptador USB-serie no la soporta,
 # esptool reintenta solo a una velocidad menor — no hace falta que este
@@ -84,7 +96,7 @@ def _build_info(path: Path) -> Dict[str, Any]:
 
 
 def list_builds() -> list[Dict[str, Any]]:
-    """Binarios .bin disponibles en firmware/nopal_accessory/builds/,
+    """Binarios .bin disponibles en data/accessories/firmware_builds/,
     ordenados del más reciente al más viejo."""
     _ensure_builds_dir()
     entries = [

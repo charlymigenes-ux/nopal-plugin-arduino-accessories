@@ -10,4 +10,7 @@ data/
 # acá). Patrón genérico para que cubra cualquier sketch bajo firmware/, no
 # solo nopal_accessory.
 firmware/*/secrets.h
-firmware/nopal_accessory/builds/
+
+# Los .bin compilados ya no viven bajo firmware/: los administra
+# firmware_flash_service en data/accessories/firmware_builds/, cubierto por
+# la regla data/ de arriba.

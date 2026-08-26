@@ -1,173 +1,3 @@
-/*
- * ============================================================================
- * NOPAL — Firmware de accesorios ESP32 / ESP8266 con buzzer (Nopal_FF)
- * ============================================================================
- *
- * Este sketch nace de fusionar dos firmwares NOPAL que ya existían por
- * separado en este repositorio:
- *
- *   - nopal_accessory.ino (protocolo 4, fw 4.1.0): ESP32 + ESP8266, relés,
- *     tira RGB analógica por PWM, tira WS2812/NeoPixel completa (color
- *     global, por píxel individual y por segmento con WSSEG), Wi-Fi con
- *     recuperación por AP, ElegantOTA y el panel web NOPAL embebido.
- *     NO tenía buzzer.
- *
- *   - NOPAL_ESP12E_BUZZER.ino (protocolo 2, fw 2.1.0): exclusivo ESP8266,
- *     con buzzer activo de patrones no bloqueantes (beep, doble beep,
- *     encendido continuo y un patrón por cada escena del taller), motor
- *     de efectos de tira (parpadeo/respirar/carrera) y comando SCENE:.
- *     NO tenía PWM RGB, NO tenía soporte ESP32 y NO tenía el comando
- *     WSSEG de segmentos.
- *
- * Nopal_FF.ino toma la base de nopal_accessory.ino (el protocolo 4 se
- * mantiene sin cambios -- todo lo que trae el buzzer son campos aditivos
- * en el JSON/identificación; un backend que no los conoce simplemente los
- * ignora, mismo criterio que ya usaba ese archivo con sus propios campos
- * "extra") y le agrega el subsistema completo de buzzer activo portado de
- * NOPAL_ESP12E_BUZZER.ino: patrones no bloqueantes, comandos
- * NOPAL:BUZZER? / NOPAL:BUZZER:<patrón>, endpoint HTTP /api/buzzer y su
- * propia tarjeta en el panel web.
- *
- * Lo que sigue SIN portarse a propósito (no es un olvido):
- *   - El motor de efectos de tira (StripEffect: parpadeo/respirar/carrera)
- *     y el comando SCENE: con estado en el servidor de
- *     NOPAL_ESP12E_BUZZER.ino. Nopal_FF.ino conserva el mismo criterio
- *     que ya tenía nopal_accessory.ino: las "Escenas rápidas" del panel
- *     aplican un color fijo, sin animación.
- *   - Sin embargo, en NOPAL_ESP12E_BUZZER.ino elegir una escena del
- *     taller también hacía sonar un patrón de buzzer, a través de
- *     applyScene() -> playSceneBuzzer(). Esa relación (color + sonido
- *     juntos) SÍ se conserva acá, pero implementada donde vive la lógica
- *     de escenas en este firmware: en el panel web (JavaScript), que
- *     ahora manda un segundo POST a /api/buzzer con el mismo nombre de
- *     escena justo después de aplicar el color. El firmware puede apagar
- *     ese acompañamiento sonoro sin recompilar el panel -- ver
- *     NOPAL_BUZZER_SCENE_SOUNDS más abajo, que el panel lee de
- *     /api/status (buzzer.scene_sounds).
- *
- * Cambios en 4.5.0-ff (TODAVÍA NO PROBADO EN HARDWARE REAL):
- *   - Reemplaza el sensor T/H analógico sin calibrar (dos canales de
- *     voltaje crudos, sin datasheet propio) por un DHT11 real: sensor
- *     digital de un solo cable, calibrado de fábrica, con checksum -- ver
- *     "SENSOR DHT11" más abajo para el protocolo (implementado a mano,
- *     sin librería) y el porqué de GPIO32. Solo ESP32 por ahora: el
- *     ESP8266 de este mapeo ya tiene los 8 pines D0-D8 ocupados y no
- *     queda ninguno libre y seguro para el sensor sin reordenar el resto
- *     del mapeo de pines.
- *
- * Cambios en 4.4.0-ff (confirmados en hardware real: una pantalla LED BLE
- * "iPixel Color" 16x32 conectada por esta placa):
- *   - La pantalla LED BLE usa la librería NimBLE-Arduino (h2zero) en vez
- *     de la BLE integrada del core (Bluedroid) -- Bluedroid no entraba en
- *     el esquema de particiones por defecto ("Sketch too big", confirmado
- *     en esta misma placa). Ver "PANTALLA LED BLE" más abajo y el
- *     README.txt de esta carpeta para instalar la librería que hace falta.
- *   - connect() de NimBLE NO dispara solo el descubrimiento de servicios
- *     BLE -- hacía falta getServices(true) explícito, si no
- *     bleScreenWriteChar/bleScreenNotifyChar nunca se encontraban aunque
- *     la conexión BLE en sí fuera exitosa.
- *   - Primer intento de conexión ya durante setup(), no en el primer
- *     ciclo de maintainBleScreen() (20s después) -- diagnóstico más
- *     rápido al arrancar.
- *   - Diagnóstico real por Serial si connect() falla (código + texto del
- *     error de NimBLE) y volcado de la tabla GATT si no aparecen los
- *     characteristics esperados, en vez de fallar en silencio.
- *   - Confirmado extremo a extremo: NOPAL arma texto real con
- *     pypixelcolor (fuente + color), esta placa lo reenvía por BLE, y la
- *     pantalla lo muestra correctamente.
- *
- * Compatible con:
- *   - ESP8266
- *   - ESP32
- *
- * Funciones:
- *   - Relés
- *   - Tira RGB analógica por PWM
- *   - Tira WS2812 / NeoPixel (color global, individual y por segmento)
- *   - Buzzer activo con patrones no bloqueantes
- *   - Sensor DHT11 de temperatura/humedad (solo ESP32)
- *   - Wi-Fi STA con reconexión automática
- *   - Punto de acceso de recuperación si falla el Wi-Fi
- *   - ElegantOTA (actualización de firmware por red) con autenticación
- *   - mDNS (http://<hostname>.local/)
- *
- * Comunicación NOPAL (USB):
- *   Serial a 115200 baudios
- *   Un comando por línea terminado en \n
- *
- * Comandos:
- *   NOPAL:ID?
- *   NOPAL:NET?
- *   NOPAL:R1:ON
- *   NOPAL:R1:OFF
- *   NOPAL:R1?
- *   NOPAL:LED:255,0,0
- *   NOPAL:WS:0,255,0
- *   NOPAL:WSSEG:0,4,255,80,0
- *   NOPAL:WS2:0,255,0        (tira 2, opcional -- ver WS2812_2_ENABLE)
- *   NOPAL:WS3:0,255,0        (tira 3, opcional -- ver WS2812_3_ENABLE)
- *   NOPAL:WSSEG2:0,4,255,80,0
- *   NOPAL:WSSEG3:0,4,255,80,0
- *   NOPAL:BUZZER?
- *   NOPAL:BUZZER:BEEP
- *   NOPAL:BUZZER:DOUBLE
- *   NOPAL:BUZZER:ON
- *   NOPAL:BUZZER:OFF
- *   NOPAL:BUZZER:ALARM
- *   NOPAL:BUZZER:READY | WORKING | WAITING | MAINTENANCE | DISCONNECTED
- *   NOPAL:BLE:STATUS?        (solo ESP32, ver "PANTALLA LED BLE" más abajo)
- *   NOPAL:DHT?               (solo ESP32, ver "SENSOR DHT11" más abajo)
- *
- * Respuesta de NOPAL:ID? (protocolo 4):
- *   NOPAL,role=accessory,chip=...,fw=4.2.0-ff,protocol=4,relays=4,pwm_led=1,
- *   ws2812=1,ws2812_count=8,ws2812_2=0,ws2812_2_count=0,ws2812_3=0,
- *   ws2812_3_count=0,buzzer=1,buzzer_pin=...,buzzer_pattern=...,
- *   wifi=1,wifi_connected=...,wifi_mode=...,hostname=...,ip=...,ota=1,
- *   ota_path=/update,uptime_ms=...,free_heap=...,
- *   ble_screen=...,ble_screen_connected=...
- *
- * Portal web (cuando hay Wi-Fi):
- *   http://IP/             -> panel NOPAL embebido (relés, NeoPixel, PWM
- *                              RGB, buzzer y estado del dispositivo) --
- *                              misma autenticación que ElegantOTA, con un
- *                              botón adentro para ir directo a /update
- *   http://IP/api/status   -> estado en JSON (de solo lectura, sin auth)
- *   http://IP/update       -> panel de ElegantOTA (usuario/clave de secrets.h)
- *   http://IP/api/relay    -> control de relés por HTTP (GET ?n=1 consulta,
- *                              POST n=1&on=true/false cambia -- requiere
- *                              las mismas credenciales que ElegantOTA)
- *   http://IP/api/led      -> control completo o por segmento:
- *                              POST mode=ws2812&start=0&count=4&r=..&g=..&b=..
- *                              &strip=0 (opcional, 0/1/2 -- tiras 2 y 3,
- *                              ver WS2812_2_ENABLE/WS2812_3_ENABLE)
- *                              (misma autenticación)
- *   http://IP/api/buzzer   -> GET consulta el patrón activo, POST
- *                              action=BEEP|DOUBLE|ON|OFF|ALARM|READY|...
- *                              dispara un patrón (misma autenticación)
- *
- * PANTALLA LED BLE (relay, solo ESP32):
- *   Ver el comentario del cambio 4.3.0-ff más arriba para el porqué de
- *   esta división de responsabilidades (NOPAL arma el protocolo en
- *   Python, esta placa solo reenvía). Configurar NOPAL_BLE_SCREEN_MAC en
- *   secrets.h con la MAC de la pantalla (se obtiene con la app iPixel
- *   Color o un escáner BLE genérico como nRF Connect -- este firmware no
- *   escanea, solo conecta).
- *
- *   http://IP/api/ble/status  -> GET, sin auth: {"configured":..,"connected":..}
- *   http://IP/api/ble/window  -> POST, mismas credenciales que /api/relay.
- *                                 Cuerpo: bytes de una "ventana" del
- *                                 protocolo de la pantalla, en hexadecimal
- *                                 (texto plano, no binario -- evita que un
- *                                 byte 0x00, que este protocolo trae
- *                                 seguido, corte el cuerpo del POST).
- *                                 Responde "OK" si la pantalla confirmó
- *                                 por BLE, o ERR:BLE_NOT_CONNECTED /
- *                                 ERR:BLE_NO_ACK / ERR:INVALID_HEX /
- *                                 ERR:BLE_NOT_CONFIGURED.
- *
- * Antes de compilar copia secrets.h.example a secrets.h y pon tus propios
- * datos (ver README.txt de esta carpeta).
- */
 
 #include <Arduino.h>
 #include "secrets.h"
@@ -179,15 +9,7 @@
   #include <ESPmDNS.h>
   #include <esp_arduino_version.h>
   #include <esp_system.h>
-  // Puente BLE hacia la pantalla LED, con la librería NimBLE-Arduino
-  // (h2zero/NimBLE-Arduino, instalar desde el Library Manager) en vez de
-  // la librería BLE integrada del core (Bluedroid) -- Bluedroid agrega
-  // ~500-700KB al binario y no entra en el esquema de particiones por
-  // defecto (confirmado: "Sketch too big" con Bluedroid, en esta misma
-  // placa). NimBLE ocupa más o menos la mitad. Un solo #include alcanza
-  // (ver el ejemplo oficial NimBLE_Client.ino del propio repo de la
-  // librería). El ESP8266 no tiene radio BLE, por eso este bloque queda
-  // fuera de su rama del #if/#elif.
+
   #include <NimBLEDevice.h>
   #include <NimBLEUtils.h>
 #elif defined(ESP8266)
@@ -201,24 +23,8 @@
 
 #include <ElegantOTA.h>
 
-// Adafruit_NeoPixel se incluye acá arriba (junto con el resto de
-// #include), aunque los objetos de tira recién se declaran mucho más
-// abajo (necesitan WS2812_PIN/WS2812_COUNT, definidos en "CONFIGURACIÓN
-// DE PINES") -- así el tipo Adafruit_NeoPixel ya existe antes de que
-// Arduino inserte sus prototipos autogenerados, evitando el mismo
-// problema que BuzzerStep/BuzzerPattern (ver el comentario grande donde
-// vivían antes, antes de moverse acá arriba, en "ESTADO DEL BUZZER
-// ACTIVO" más abajo).
 #include <Adafruit_NeoPixel.h>
 
-// BuzzerStep/BuzzerPattern también se definen bien arriba, por el mismo
-// motivo: son parámetros de buzzerPatternName()/startBuzzerPattern(), y
-// necesitan existir antes de que Arduino intente autogenerar prototipos
-// para esas funciones (algo que hace SIEMPRE, sin importar si ya hay un
-// forward declaration puesto más adelante en el archivo -- confirmado
-// compilando de verdad, Arduino IDE). El resto de su documentación
-// (patrones, arrays BUZZER_PATTERN_*) sigue viviendo en su lugar
-// original, más abajo, en "ESTADO DEL BUZZER ACTIVO".
 struct BuzzerStep {
   bool on;
   uint16_t durationMs;
@@ -237,46 +43,81 @@ enum class BuzzerPattern : uint8_t {
   DISCONNECTED
 };
 
-// Mismo motivo que BuzzerStep/BuzzerPattern arriba: dhtRead() lo devuelve
-// por valor, así que tiene que existir antes de que Arduino autogenere su
-// prototipo. El resto del subsistema DHT11 (dhtReadRaw, handleDhtCommand,
-// etc.) sigue viviendo en su lugar original, más abajo, en "SENSOR DHT11".
 struct DhtReading {
   bool valid;
   float humidityPct;
   float temperatureC;
 };
 
-
 // ============================================================================
-// CONFIGURACIÓN GENERAL
+// PROTOTIPOS EXPLÍCITOS
 // ============================================================================
+//
+// Arduino auto-genera prototipos para las funciones de nivel superior del
+// .ino, pero ese mecanismo (basado en ctags) resultó frágil en este
+// archivo: en compilaciones sucesivas dejó de encontrar funciones
+// distintas cada vez (jsonEscape, handleBuzzerCommand, handleRelayCommand,
+// wifiCredentialsConfigured...) sin que cambiara nada relevante en el
+// código. En vez de perseguir el síntoma función por función, se declaran
+// acá todas explícitamente, de una sola vez.
+bool ws2812StripEnabled(uint8_t stripIndex);
+uint8_t ws2812StripPin(uint8_t stripIndex);
+bool bleScreenConfigured();
+bool bleScreenIsConnected();
+bool connectBleScreen();
+void maintainBleScreen();
+bool bleScreenWriteWindow(const uint8_t* data, size_t length, String& response);
+int hexNibble(char digit);
+bool hexToBytes(const String& hex, uint8_t* out, size_t maxLength, size_t& outLength);
+bool dhtReadRaw(uint8_t data[5]);
+void dhtForceRead();
+void handleDhtCommand(String& response);
+uint8_t clampColor(int value);
+bool validRelayIndex(int index);
+uint32_t maxU32(uint32_t first, uint32_t second);
+void setStatusLed(bool on);
+void serviceStatusLed();
+String chipModelText();
+void printChipIdentification();
+String resetReasonText();
+String chipSuffix();
+bool wifiCredentialsConfigured();
+String activeIpAddress();
+String wifiModeText();
+String jsonEscape(const String& input);
+void setRelay(uint8_t index, bool on);
+bool getRelay(uint8_t index);
+void setupPwmLed();
+void setPwmLedColor(uint8_t red, uint8_t green, uint8_t blue);
+void setWs2812ColorAt(uint8_t stripIndex, uint8_t red, uint8_t green, uint8_t blue);
+void setWs2812Color(uint8_t red, uint8_t green, uint8_t blue);
+void setWs2812Color2(uint8_t red, uint8_t green, uint8_t blue);
+void setWs2812Color3(uint8_t red, uint8_t green, uint8_t blue);
+void playStartupAnimation();
+void setBuzzerOutput(bool on);
+void initializeBuzzerSafely();
+String buzzerPatternName(BuzzerPattern pattern);
+void stopBuzzer();
+bool startBuzzerFromText(String patternText);
+void serviceBuzzer();
+void setWifiHostname();
+void startRecoveryAccessPoint();
+void startMdnsIfPossible();
+void setupWifi();
+void maintainWifiConnection();
+String buildStatusJson();
+bool checkApiAuth();
+void setupWebServer();
+void serviceNetwork();
+void sendIdentification();
+void sendNetworkIdentification();
+bool handleRelayCommand(const String& command, String& response);
+bool handleBuzzerCommand(const String& command, String& response);
+void handleCommand(String line);
 
 #define FW_VERSION "4.5.0-ff"
 #define NOPAL_PROTOCOL 4
 
-// La mayoría de módulos de relés se activan con LOW (pin en LOW = relé
-// encendido, HIGH = apagado). getRelay()/setRelay() más abajo aplican esta
-// MISMA polaridad tanto al escribir el pin (encender/apagar) como al
-// leerlo de vuelta para reportar el estado -- así que, sea cual sea el
-// valor de acá, lo que la placa reporta por Serial/`/api/status` siempre
-// coincide con lo que ella misma le mandó al pin.
-//
-// El problema es cuando el módulo de relé real NO respeta esa convención:
-// hay módulos (sobre todo los pensados para ESP32/NodeMCU, que evitan
-// arrancar con el pin en LOW por los pines de bootstrapping) que se activan
-// al revés, con HIGH. Confirmado en hardware real: con uno de esos módulos
-// conectado, prender un relé desde NOPAL lo deja físicamente apagado (y
-// viceversa) aunque el firmware reporte exactamente lo que él mismo
-// escribió -- el firmware "miente" sin saberlo porque asume la polaridad
-// equivocada para ESE módulo en particular.
-//
-// Se soluciona sin tocar este archivo: define NOPAL_RELAY_ACTIVE_LOW en tu
-// secrets.h (0 = tu módulo se activa con HIGH, 1 = con LOW -- el valor por
-// defecto de acá abajo si no lo definís, y coincide con la mayoría de
-// módulos genéricos de 1/2/4/8 canales). Cada placa tiene su propio
-// secrets.h, así que dos placas con módulos de relé distintos pueden usar
-// cada una el valor que les corresponda sin tocar el .ino.
 #ifndef NOPAL_RELAY_ACTIVE_LOW
   #define NOPAL_RELAY_ACTIVE_LOW 1
 #endif
@@ -288,23 +129,7 @@ const uint32_t WIFI_RECONNECT_INTERVAL_MS = 15000;
 
 const uint16_t HTTP_PORT = 80;
 
-
-// ============================================================================
-// CONFIGURACIÓN DE PINES
-// ============================================================================
-//
-// Los ESP32 y ESP8266 no tienen la misma cantidad ni numeración de GPIO.
-// Por eso se utiliza una configuración distinta para cada plataforma.
-//
-// IMPORTANTE:
-// Ajusta estos pines según tu placa y tu cableado.
-//
-
 #if defined(ESP32)
-
-// --------------------------------------------------------------------------
-// ESP32
-// --------------------------------------------------------------------------
 
 #define RELAY_COUNT 4
 
@@ -325,11 +150,6 @@ const uint8_t RELAY_PINS[RELAY_COUNT] = {
 #define WS2812_PIN 23
 #define WS2812_COUNT 16
 
-// Tiras 2 y 3 (opcionales, desactivadas por defecto): mismo mecanismo que
-// la tira 1, en pines libres de este mapeo (no los usa ningún relé, el
-// PWM RGB, la tira 1, el LED de estado ni el buzzer) y que tampoco son de
-// strapping. Poné el _ENABLE en true y ajustá el pin/cantidad si cableás
-// una segunda o tercera tira NeoPixel.
 #define WS2812_2_ENABLE true
 #define WS2812_2_PIN 21
 #define WS2812_2_COUNT 1
@@ -338,85 +158,38 @@ const uint8_t RELAY_PINS[RELAY_COUNT] = {
 #define WS2812_3_PIN 22
 #define WS2812_3_COUNT 8
 
-// LED integrado de la placa ("Dev Module" típico) -- indica que el
-// firmware está vivo. GPIO2 está libre en este mapeo de pines (no lo usa
-// ningún relé/PWM/WS2812), a diferencia de ESP8266 (ver abajo).
 #define STATUS_LED_ENABLE true
 #define STATUS_LED_PIN 2
 #define STATUS_LED_ACTIVE_LOW false
 
-// Buzzer activo. GPIO4 no lo usa ningún relé (16-19), el PWM RGB
-// (25-27), la tira WS2812 (23) ni el LED de estado (2) en este mapeo -- y
-// no es uno de los pines de strapping del ESP32 (esos son GPIO0, GPIO2,
-// GPIO5, GPIO12 y GPIO15), así que sirve como salida digital simple y
-// segura para un buzzer activo.
 #define BUZZER_ENABLE true
-#define BUZZER_PIN 4
+#define BUZZER_PIN 14
 
-// Sensor DHT11 de temperatura/humedad, un solo cable de datos. Reemplaza
-// al sensor analógico sin calibrar que traía este firmware (ver el
-// historial de cambios al principio del archivo) -- el DHT11 ya viene
-// calibrado de fábrica y manda un checksum, así que una lectura corrupta
-// se puede detectar en vez de reportarse como si fuera un dato bueno.
-// GPIO32 no lo usa ningún relé/PWM/WS2812/LED/buzzer de arriba, no es un
-// pin de solo-entrada (el protocolo del DHT11 necesita mandar Y recibir
-// por el mismo cable) y no es uno de los pines de strapping del ESP32.
 #define DHT_ENABLE true
 #define DHT_PIN 32
 
-
 #elif defined(ESP8266)
-
-// --------------------------------------------------------------------------
-// ESP8266 / NodeMCU / Wemos D1 Mini
-// --------------------------------------------------------------------------
-//
-// Correspondencias habituales:
-//
-// D1 = GPIO5
-// D2 = GPIO4
-// D5 = GPIO14
-// D6 = GPIO12
-// D7 = GPIO13
-// D8 = GPIO15
-// D0 = GPIO16
-// D4 = GPIO2
-//
-// No uses los nombres D1, D2, etc. si deseas compatibilidad con placas
-// genéricas. Los GPIO numéricos son más universales.
-//
 
 #define RELAY_COUNT 4
 
 const uint8_t RELAY_PINS[RELAY_COUNT] = {
-  5,   // D1
-  4,   // D2
-  14,  // D5
-  12   // D6
+  5,
+  4,
+  14,
+  12
 };
 
 #define PWM_LED_ENABLE false
 
-#define PWM_LED_PIN_R 13  // D7
-#define PWM_LED_PIN_G 15  // D8
-// GPIO0/D3 en vez de GPIO16 a propósito: en esta placa el PWM RGB no está
-// cableado (solo se usa la tira WS2812), así que es el candidato ideal
-// para heredar el pin de arranque conflictivo -- si nada physically tira
-// de él, GPIO0 se queda en su pull-up interno y arranca normal. Si en
-// algún momento SÍ cableas un LED RGB analógico acá, cambia este pin por
-// otro libre antes de conectarlo.
-#define PWM_LED_PIN_B 0   // D3
+#define PWM_LED_PIN_R 13
+#define PWM_LED_PIN_G 15
+
+#define PWM_LED_PIN_B 0
 
 #define WS2812_ENABLE true
-#define WS2812_PIN 2      // D4
+#define WS2812_PIN 2
 #define WS2812_COUNT 8
 
-// Tiras 2 y 3: en este mapeo de ESP8266 los GPIO disponibles ya están
-// todos asignados (relés 5/4/14/12, PWM RGB 13/15/0, tira 1 en GPIO2,
-// buzzer en GPIO16) -- no queda un pin libre y seguro para una segunda o
-// tercera tira sin reordenar el mapa de pines de arriba. Quedan
-// desactivadas acá (mismo mecanismo que en ESP32) solo para que el resto
-// del código compile igual en las dos plataformas.
 #define WS2812_2_ENABLE false
 #define WS2812_2_PIN 2
 #define WS2812_2_COUNT 8
@@ -425,42 +198,21 @@ const uint8_t RELAY_PINS[RELAY_COUNT] = {
 #define WS2812_3_PIN 2
 #define WS2812_3_COUNT 8
 
-// GPIO2 (D4), el LED integrado habitual de las NodeMCU/Wemos, ya lo usa
-// WS2812_PIN en este mapeo -- no queda un pin libre y seguro para un LED
-// de estado dedicado sin arriesgar un conflicto con la tira WS2812. Sin
-// LED de estado en ESP8266 por ahora (ver STATUS_LED_ENABLE en ESP32).
 #define STATUS_LED_ENABLE false
 
-// Buzzer activo. GPIO16/D0 en vez de GPIO0/D3: no participa en la
-// selección de modo de arranque del ESP8266 (a diferencia de GPIO0/2/15),
-// así que un buzzer cableado ahí no puede impedir que la placa arranque.
-// Antes vivía en GPIO0/D3 -- confirmado en hardware real que eso causaba
-// arranques intermitentes con el buzzer conectado. GPIO16 queda libre
-// porque PWM_LED_PIN_B se movió arriba a GPIO0 (sin cablear en esta placa).
-#define BUZZER_ENABLE false
-#define BUZZER_PIN 16  // D0
+// Algunas placas ESP8266 de esta familia sí traen buzzer en D0/GPIO16 y
+// otras no; a diferencia del resto de este bloque (fijo por tipo de
+// placa), esto se decide por unidad física via secrets.h.
+#ifndef NOPAL_BUZZER_HW_PRESENT
+  #define NOPAL_BUZZER_HW_PRESENT false
+#endif
+#define BUZZER_ENABLE NOPAL_BUZZER_HW_PRESENT
+#define BUZZER_PIN 16
 
-// Sensor DHT11: no habilitado en ESP8266 -- en este mapeo los 8 pines
-// D0-D8 ya están todos ocupados (relés, PWM RGB, WS2812, buzzer) y no
-// queda ninguno libre y seguro sin reordenar el resto del mapeo. Queda
-// desactivado acá solo para que el resto del código compile igual en las
-// dos plataformas (mismo criterio que WS2812_2/3_ENABLE más arriba).
 #define DHT_ENABLE false
 #define DHT_PIN 0
 
 #endif
-
-
-// ============================================================================
-// NOMBRES DE RELÉS (opcionales, solo para el panel web)
-// ============================================================================
-//
-// RELAY_COUNT vale 4 en ambas plataformas de arriba, así que este bloque
-// vive fuera del #if ESP32/ESP8266. Igual que en NOPAL_ESP12E.ino: si
-// secrets.h no define estos macros (lo normal, secrets.h.example no los
-// trae por defecto) se usa "Relé N" -- un secrets.h viejo o incompleto
-// sigue compilando sin tocarlo.
-//
 
 #ifndef NOPAL_RELAY1_NAME
   #define NOPAL_RELAY1_NAME "Relé 1"
@@ -485,56 +237,22 @@ const char* const RELAY_NAMES[RELAY_COUNT] = {
   NOPAL_RELAY4_NAME
 };
 
-// MAC de la pantalla LED BLE (formato "AA:BB:CC:DD:EE:FF"). Vacío por
-// defecto = función desactivada, ningún secrets.h viejo se rompe por no
-// tener esto definido (mismo criterio que los nombres de relé de arriba).
-// Solo tiene efecto en ESP32 -- ver bloque "PANTALLA LED BLE" más abajo.
 #ifndef NOPAL_BLE_SCREEN_MAC
   #define NOPAL_BLE_SCREEN_MAC ""
 #endif
-
-
-// ============================================================================
-// PARÁMETROS DEL BUZZER (opcionales, con valor por defecto)
-// ============================================================================
-//
-// Mismo criterio que los nombres de relé de arriba: si secrets.h no los
-// define (lo normal, secrets.h.example los trae comentados), se usan
-// estos valores por defecto -- un secrets.h viejo o incompleto sigue
-// compilando sin tocarlo. El PIN del buzzer NO se configura acá: depende
-// de la placa (ESP32 usa GPIO4, ESP8266 usa GPIO0/D3) y ya quedó fijado
-// arriba, junto con BUZZER_ENABLE, en "CONFIGURACIÓN DE PINES".
-//
 
 #ifndef NOPAL_BUZZER_ACTIVE_HIGH
   #define NOPAL_BUZZER_ACTIVE_HIGH 0
 #endif
 
-// Buzzer PASIVO (sin oscilador propio: necesita una señal PWM oscilando a
-// una frecuencia audible para sonar, no alcanza con digitalWrite HIGH/LOW
-// como con uno activo). En 0 (por defecto) se mantiene el comportamiento
-// de siempre (digitalWrite simple, ver setBuzzerOutput). En 1, el pin se
-// maneja con PWM por hardware (LEDC en ESP32, tone()/noTone() en ESP8266)
-// a NOPAL_BUZZER_TONE_HZ mientras esté "on", igual que cualquier buzzer
-// pasivo de 2 pines conectado a un GPIO.
 #ifndef NOPAL_BUZZER_PASSIVE
   #define NOPAL_BUZZER_PASSIVE 1
 #endif
 
-// Frecuencia del tono para buzzer pasivo. 2700 Hz es un valor típico de
-// buen volumen para los zumbadores pasivos de 12mm más comunes -- ajusta
-// si el tuyo suena mejor en otra frecuencia (prueba entre 2000 y 4000 Hz).
 #ifndef NOPAL_BUZZER_TONE_HZ
   #define NOPAL_BUZZER_TONE_HZ 2700
 #endif
 
-// Si vale 1 (por defecto), el panel web hace sonar un patrón de buzzer
-// acorde cada vez que se aplica una escena rápida (Listo/Trabajando/En
-// espera/Alarma/Mantenimiento/Desconectado/Apagar), igual que hacía
-// NOPAL_ESP12E_BUZZER.ino con applyScene(). En 0, las escenas solo
-// cambian el color de la tira, sin sonido. El panel lee este valor desde
-// /api/status (buzzer.scene_sounds) para decidir si manda ese segundo
-// POST a /api/buzzer.
 #ifndef NOPAL_BUZZER_SCENE_SOUNDS
   #define NOPAL_BUZZER_SCENE_SOUNDS 1
 #endif
@@ -544,42 +262,19 @@ const bool BUZZER_PASSIVE = NOPAL_BUZZER_PASSIVE != 0;
 const uint16_t BUZZER_TONE_HZ = NOPAL_BUZZER_TONE_HZ;
 
 #if defined(ESP32)
-  // Canal LEDC 3: el PWM RGB ya usa 0/1/2 (ver PWM_CHANNEL_R/G/B) -- solo
-  // se usa en Core 2.x, donde ledcSetup/ledcAttachPin/ledcWrite piden un
-  // canal explícito. En Core 3.x la API es directamente por pin.
+
   const uint8_t PWM_CHANNEL_BUZZER = 3;
 #endif
 
-
-// ============================================================================
-// CONFIGURACIÓN WS2812
-// ============================================================================
-
 #if WS2812_ENABLE
 
-// Adafruit_NeoPixel.h ya se incluyó arriba de todo, junto con el resto de
-// #include (ver el comentario ahí) -- acá abajo solo van los objetos de
-// tira, que sí necesitan WS2812_PIN/WS2812_COUNT recién definidos en
-// "CONFIGURACIÓN DE PINES".
-
-// Hasta 3 tiras independientes, cada una en su propio pin. La tira 0 es
-// la de siempre (WS2812_PIN/WS2812_COUNT, siempre activa si
-// WS2812_ENABLE); las tiras 1 y 2 son opcionales (WS2812_2_ENABLE /
-// WS2812_3_ENABLE, ver "CONFIGURACIÓN DE PINES") y se declaran siempre
-// (aunque estén desactivadas) para no complicar el resto del código con
-// más #if anidados -- si están desactivadas simplemente nunca se llaman
-// begin()/show() y ws2812StripEnabled() las rechaza.
 Adafruit_NeoPixel strip(WS2812_COUNT, WS2812_PIN, NEO_GRB + NEO_KHZ800);
 Adafruit_NeoPixel strip2(WS2812_2_COUNT, WS2812_2_PIN, NEO_GRB + NEO_KHZ800);
 Adafruit_NeoPixel strip3(WS2812_3_COUNT, WS2812_3_PIN, NEO_GRB + NEO_KHZ800);
 
-// Acceso indexado (0/1/2) a las 3 tiras, para no repetir un switch/if en
-// cada función que necesita "la tira número N" (setWs2812Color,
-// setWs2812Segment, setup(), estado JSON, etc).
-
 bool ws2812StripEnabled(uint8_t stripIndex) {
   switch (stripIndex) {
-    case 0: return true;  // WS2812_ENABLE ya envuelve todo este bloque
+    case 0: return true;
     case 1: return WS2812_2_ENABLE;
     case 2: return WS2812_3_ENABLE;
     default: return false;
@@ -615,52 +310,16 @@ Adafruit_NeoPixel* ws2812StripObject(uint8_t stripIndex) {
 
 #endif
 
-
-// ============================================================================
-// PANTALLA LED BLE (relay, solo ESP32)
-// ============================================================================
-//
-// Esta placa NO sabe armar los comandos de la pantalla (eso requiere
-// renderizar fuentes a bitmaps, CRC32, empaquetado en ventanas -- ver el
-// comentario del cambio 4.3.0-ff en el encabezado del archivo). Todo eso
-// lo arma NOPAL en Python con la librería pypixelcolor y se lo manda a
-// esta placa ya listo por HTTP (POST /api/ble/window, cuerpo en
-// hexadecimal); la placa solo lo reenvía por BLE y espera la confirmación
-// (ack) del dispositivo.
-//
-// Deliberadamente NO se implementa escaneo BLE acá: la API de escaneo
-// (BLEScan/BLEScanResults) cambió de forma incompatible entre versiones
-// del core de ESP32, y este firmware se escribe sin poder compilarlo en
-// este entorno -- mejor conectar directo por MAC fija (NOPAL_BLE_SCREEN_MAC
-// en secrets.h, obtenida una vez con la app iPixel Color o un escáner BLE
-// genérico como nRF Connect) que arriesgar un error de compilación en la
-// parte más frágil del código.
-//
-// Confirmado en hardware real (4.4.0-ff): conexión, escritura de ventana
-// con ack, y texto renderizado por NOPAL mostrado correctamente en una
-// pantalla LED BLE "iPixel Color" 16x32.
-
 #if defined(ESP32)
 
 static NimBLEUUID BLE_SCREEN_WRITE_UUID("0000fa02-0000-1000-8000-00805f9b34fb");
 static NimBLEUUID BLE_SCREEN_NOTIFY_UUID("0000fa03-0000-1000-8000-00805f9b34fb");
 
-// Bytes por escritura BLE. El protocolo de referencia (pypixelcolor) usa
-// 244, pensado para un MTU negociado de 247 -- acá se usa un valor más
-// chico a propósito: es puramente un detalle de transporte (cuántas
-// escrituras GATT hacen falta para mandar una ventana), no cambia nada del
-// protocolo en sí, y así no depende de que el ESP32 negocie el MTU más
-// grande con éxito en cualquier pantalla/adaptador.
 const size_t BLE_SCREEN_CHUNK_SIZE = 180;
 
 const uint32_t BLE_SCREEN_RECONNECT_INTERVAL_MS = 20000;
 const uint32_t BLE_SCREEN_ACK_TIMEOUT_MS = 8000;
 
-// Bytes máximos de una ventana ya decodificada (ver hexToBytes) -- de
-// sobra para mensajes de texto cortos, que es el uso real esperado; una
-// ventana del protocolo puede llegar a 12 KB, así que el límite queda por
-// debajo de eso a propósito, para no reservar memoria de más en una placa
-// que también corre Wi-Fi + WebServer + buzzer.
 const size_t BLE_SCREEN_MAX_WINDOW_BYTES = 8192;
 
 NimBLEClient* bleScreenClient = nullptr;
@@ -670,21 +329,14 @@ NimBLERemoteCharacteristic* bleScreenNotifyChar = nullptr;
 volatile bool bleScreenAckReceived = false;
 uint32_t bleScreenLastAttemptMs = 0;
 
-
 bool bleScreenConfigured() {
   return strlen(NOPAL_BLE_SCREEN_MAC) > 0;
 }
-
 
 bool bleScreenIsConnected() {
   return bleScreenClient != nullptr && bleScreenClient->isConnected();
 }
 
-
-// Firma exigida por NimBLERemoteCharacteristic::subscribe(). El
-// dispositivo contesta con un frame de 5 bytes [0x05, _, _, _, código] --
-// código 0/1/3 son las únicas confirmaciones válidas documentadas
-// (ver iPIXEL-Protocol-Documentation.md del proyecto ha-ipixel-color).
 void bleScreenNotifyCallback(
   NimBLERemoteCharacteristic* characteristic,
   uint8_t* data,
@@ -700,11 +352,6 @@ void bleScreenNotifyCallback(
   }
 }
 
-
-// Intenta conectar (no bloquea el resto del loop() más que lo que tarda
-// NimBLEClient::connect(), igual que ya hace maintainWifiConnection() con
-// WiFi.begin()). Se llama sola desde maintainBleScreen() cada
-// BLE_SCREEN_RECONNECT_INTERVAL_MS mientras no haya conexión.
 bool connectBleScreen() {
   if (!bleScreenConfigured()) {
     return false;
@@ -712,10 +359,7 @@ bool connectBleScreen() {
 
   if (bleScreenClient == nullptr) {
     bleScreenClient = NimBLEDevice::createClient();
-    // El timeout default de connect() es 30s -- un intento fallido (fuera
-    // de rango, apagada, etc.) bloquearía serviceNetwork() y por lo tanto
-    // Wi-Fi/HTTP por ese tiempo. 5s alcanza de sobra para una pantalla en
-    // rango y deja el resto de la placa responsiva si no lo está.
+
     bleScreenClient->setConnectTimeout(5000);
   }
 
@@ -726,16 +370,10 @@ bool connectBleScreen() {
   bleScreenWriteChar = nullptr;
   bleScreenNotifyChar = nullptr;
 
-  // NimBLEAddress toma un std::string (no un String de Arduino, al revés
-  // que casi toda la API de Arduino) y un tipo de dirección explícito, sin
-  // default -- BLE_ADDR_PUBLIC es lo correcto para prácticamente cualquier
-  // periférico BLE de consumo como esta pantalla. Ver NimBLEAddress.h.
   NimBLEAddress address(std::string(NOPAL_BLE_SCREEN_MAC), BLE_ADDR_PUBLIC);
 
   if (!bleScreenClient->connect(address)) {
-    // Diagnóstico real en vez de fallar en silencio -- maintainBleScreen()
-    // reintenta solo, así que esto va a aparecer cada
-    // BLE_SCREEN_RECONNECT_INTERVAL_MS mientras la pantalla no conecte.
+
     Serial.print("NOPAL:BLE_CONNECT_FAILED,code=");
     Serial.print(bleScreenClient->getLastError());
     Serial.print(",reason=");
@@ -743,12 +381,6 @@ bool connectBleScreen() {
     return false;
   }
 
-  // getServices() devuelve un vector (no un map como en la librería BLE
-  // clásica del core). El refresh=true es obligatorio acá -- confirmado en
-  // hardware real: connect() NO dispara solo el descubrimiento de
-  // servicios (a pesar de su parámetro deleteAttributes), y sin refresh
-  // getServices() devuelve un caché vacío -- ningún servicio, aunque la
-  // conexión BLE haya sido exitosa.
   const std::vector<NimBLERemoteService*>& services = bleScreenClient->getServices(true);
 
   for (NimBLERemoteService* service : services) {
@@ -770,10 +402,7 @@ bool connectBleScreen() {
   }
 
   if (bleScreenWriteChar == nullptr || bleScreenNotifyChar == nullptr) {
-    // Diagnóstico: la pantalla puede no hablar exactamente el protocolo
-    // "iPixel Color" documentado (otro chipset, otros UUIDs) -- volcar
-    // todo lo que sí se descubrió para poder comparar contra
-    // BLE_SCREEN_WRITE_UUID/BLE_SCREEN_NOTIFY_UUID.
+
     Serial.println("NOPAL:BLE_CHARACTERISTICS_NOT_FOUND,dumping_gatt_table:");
     for (NimBLERemoteService* service : services) {
       Serial.print("  service ");
@@ -794,7 +423,6 @@ bool connectBleScreen() {
   return true;
 }
 
-
 void maintainBleScreen() {
   if (!bleScreenConfigured() || bleScreenIsConnected()) {
     return;
@@ -810,11 +438,6 @@ void maintainBleScreen() {
   connectBleScreen();
 }
 
-
-// Reenvía `length` bytes ya armados por NOPAL a la pantalla, en escrituras
-// de a lo sumo BLE_SCREEN_CHUNK_SIZE bytes, y espera el ack. Devuelve
-// false y deja el motivo en `response` si algo falla -- nunca lanza ni
-// bloquea más allá de BLE_SCREEN_ACK_TIMEOUT_MS.
 bool bleScreenWriteWindow(const uint8_t* data, size_t length, String& response) {
   if (!bleScreenIsConnected() || bleScreenWriteChar == nullptr) {
     response = "ERR:BLE_NOT_CONNECTED";
@@ -828,8 +451,6 @@ bool bleScreenWriteWindow(const uint8_t* data, size_t length, String& response) 
   while (offset < length) {
     const size_t chunkLength = min(BLE_SCREEN_CHUNK_SIZE, length - offset);
 
-    // true = "write with response": mismo comportamiento que
-    // write_gatt_char(..., response=True) del lado Python de referencia.
     bleScreenWriteChar->writeValue(data + offset, chunkLength, true);
 
     offset += chunkLength;
@@ -850,7 +471,6 @@ bool bleScreenWriteWindow(const uint8_t* data, size_t length, String& response) 
   return true;
 }
 
-
 int hexNibble(char digit) {
   if (digit >= '0' && digit <= '9') {
     return digit - '0';
@@ -867,13 +487,6 @@ int hexNibble(char digit) {
   return -1;
 }
 
-
-// Decodifica un string hexadecimal a bytes crudos en `out` (capacidad
-// `maxLength`). Se manda en hex y no en binario a propósito: el cuerpo de
-// un POST leído como String de Arduino puede cortarse en el primer byte
-// 0x00 (String no está pensado para binario arbitrario), y estos paquetes
-// SIEMPRE van a traer bytes 0x00 (longitudes/CRC en little-endian). Texto
-// hexadecimal es puro ASCII imprimible, así que no tiene ese problema.
 bool hexToBytes(const String& hex, uint8_t* out, size_t maxLength, size_t& outLength) {
   const size_t hexLength = hex.length();
 
@@ -896,51 +509,17 @@ bool hexToBytes(const String& hex, uint8_t* out, size_t maxLength, size_t& outLe
   return true;
 }
 
-#endif // defined(ESP32)
-
-
-// ============================================================================
-// SENSOR DHT11 (temperatura/humedad, solo ESP32)
-// ============================================================================
-//
-// Reemplaza al sensor analógico sin calibrar que traía este firmware (dos
-// canales de voltaje crudos, sin datasheet propio -- ver el historial de
-// cambios al principio del archivo). El DHT11 es un sensor digital real,
-// calibrado de fábrica, con un byte de checksum que permite detectar una
-// lectura corrupta en vez de reportar un dato inventado.
-//
-// Protocolo de un solo cable, por temporización de pulsos -- implementado
-// a mano (sin sumar una librería del Library Manager) siguiendo el mismo
-// criterio que el resto de protocolos de este archivo (hexToBytes,
-// jsonEscape, el propio puente BLE). Referencia: datasheet DHT11 (Aosong),
-// sección de temporización de la señal.
-//
-// Solo ESP32 por ahora (ver DHT_ENABLE en "CONFIGURACIÓN DE PINES") -- el
-// ESP8266 de este mapeo ya tiene los 8 pines D0-D8 ocupados y no queda
-// ninguno libre y seguro sin reordenar el resto del mapeo de pines.
+#endif
 
 #if DHT_ENABLE
 
 DhtReading dhtLastReading = {false, 0.0f, 0.0f};
 uint32_t dhtLastReadAtMs = 0;
 
-// El DHT11 no soporta más de ~1 lectura por segundo (datasheet: "sampling
-// period at least 1 second") -- pedirle una lectura más seguido devuelve
-// timeout o datos corruptos. dhtRead() cachea el último resultado válido
-// y solo dispara el protocolo bit a bit cuando ya pasó este intervalo, así
-// /api/status (sondeado cada 2.5s por el panel web) casi siempre devuelve
-// un dato ya leído en vez de repetir la lectura en cada request.
 const uint32_t DHT_MIN_INTERVAL_MS = 2000;
 
-// Umbral (en microsegundos) para distinguir un bit 0 de un bit 1: el
-// pulso HIGH que codifica cada bit dura ~26-28us (bit 0) o ~70us (bit 1)
-// según el datasheet -- 40us queda a mitad de camino entre ambos.
 const uint32_t DHT_BIT_THRESHOLD_US = 40;
 
-// Espera hasta que el pin tenga el nivel pedido, hasta `timeoutUs`
-// microsegundos. Devuelve cuánto tardó en llegar ese nivel, o -1 si se
-// venció el timeout -- se usa para medir el ancho de cada pulso del
-// protocolo, que es lo que codifica la respuesta del sensor y cada bit.
 int32_t dhtWaitForLevel(uint8_t level, uint32_t timeoutUs) {
   const uint32_t startedAt = micros();
 
@@ -958,8 +537,6 @@ bool dhtReadRaw(uint8_t data[5]) {
     data[index] = 0;
   }
 
-  // Señal de arranque: el maestro (esta placa) baja la línea 18ms como
-  // mínimo (datasheet) para pedirle una lectura al sensor.
   pinMode(DHT_PIN, OUTPUT);
   digitalWrite(DHT_PIN, LOW);
   delay(18);
@@ -967,14 +544,10 @@ bool dhtReadRaw(uint8_t data[5]) {
   delayMicroseconds(30);
   pinMode(DHT_PIN, INPUT_PULLUP);
 
-  // Respuesta del sensor: 80us en LOW + 80us en HIGH antes de empezar a
-  // mandar los 40 bits de datos.
   if (dhtWaitForLevel(LOW, 100) < 0) return false;
   if (dhtWaitForLevel(HIGH, 100) < 0) return false;
   if (dhtWaitForLevel(LOW, 100) < 0) return false;
 
-  // Cada bit: ~50us en LOW (siempre igual, se descarta) seguido de un
-  // HIGH cuyo ancho codifica el valor -- ver DHT_BIT_THRESHOLD_US.
   for (uint8_t bitIndex = 0; bitIndex < 40; bitIndex++) {
     if (dhtWaitForLevel(HIGH, 100) < 0) return false;
 
@@ -992,8 +565,6 @@ bool dhtReadRaw(uint8_t data[5]) {
   return checksum == data[4];
 }
 
-// Fuerza una lectura nueva (ignora el caché y el intervalo mínimo) -- la
-// usa dhtRead() cuando corresponde, no se llama directo desde afuera.
 void dhtForceRead() {
   uint8_t data[5];
   dhtLastReadAtMs = millis();
@@ -1003,18 +574,11 @@ void dhtForceRead() {
     return;
   }
 
-  // El DHT11 (a diferencia del DHT22) no trae decimales reales: los bytes
-  // data[1]/data[3] valen 0 en el hardware real, pero se suman igual
-  // por si alguna variante del sensor sí los usa (mismo criterio que el
-  // datasheet de referencia).
   dhtLastReading.valid = true;
   dhtLastReading.humidityPct = data[0] + (data[1] / 10.0f);
   dhtLastReading.temperatureC = data[2] + (data[3] / 10.0f);
 }
 
-// Lectura para JSON/comandos: devuelve la última lectura en caché si
-// todavía está fresca, o dispara una nueva si ya venció
-// DHT_MIN_INTERVAL_MS -- ver el comentario de esa constante más arriba.
 DhtReading dhtRead() {
   if (millis() - dhtLastReadAtMs >= DHT_MIN_INTERVAL_MS) {
     dhtForceRead();
@@ -1023,9 +587,6 @@ DhtReading dhtRead() {
   return dhtLastReading;
 }
 
-// Mismo criterio que handleBuzzerCommand(): devuelve la respuesta por
-// referencia para reusarse desde Serial (NOPAL:DHT?) y desde buildStatusJson()
-// sin duplicar la lectura.
 void handleDhtCommand(String& response) {
   const DhtReading reading = dhtRead();
 
@@ -1041,36 +602,6 @@ void handleDhtCommand(String& response) {
 
 #endif
 
-
-// ============================================================================
-// PANEL WEB NOPAL
-// ============================================================================
-//
-// Mismo panel que nopal_accessory.ino (misma paleta/CSS, calcada a
-// propósito), con una tarjeta nueva de "Buzzer activo" (beep, doble beep,
-// patrones de escena y silenciar) portada de NOPAL_ESP12E_BUZZER.ino. Las
-// "Escenas rápidas" ahora también disparan el patrón de buzzer que le
-// corresponde a cada escena (si NOPAL_BUZZER_SCENE_SOUNDS está activo) --
-// mismo acompañamiento sonoro que applyScene() hacía en
-// NOPAL_ESP12E_BUZZER.ino, implementado acá en el propio panel (dos POST:
-// uno a /api/led para el color, otro a /api/buzzer para el sonido) en vez
-// de un comando SCENE: del lado del firmware, porque este sketch no trae
-// el motor de escenas con estado en el servidor de esa firmware (ver la
-// nota grande al principio del archivo).
-//
-// Diferencias reales frente al panel de NOPAL_ESP12E_BUZZER.ino (no son
-// bugs, son decisiones de alcance explicadas arriba):
-//   - Sin "Escenas del taller" animadas (parpadeo/respirar/carrera): este
-//     firmware no tiene el motor de efectos StripEffect, así que las
-//     "Escenas rápidas" de acá aplican un color fijo con la misma
-//     paleta, sin animación -- se avisa en el propio panel.
-//   - Sin brillo de NeoPixel ajustable ni entrada analógica (A0): igual
-//     que en nopal_accessory.ino, esta placa no reserva pines para eso.
-//   - Con tira RGB analógica por PWM (mode=pwm) y con el comando WSSEG de
-//     segmentos: NOPAL_ESP12E_BUZZER.ino no los tenía, nopal_accessory.ino
-//     sí, y acá se conservan.
-//   - Con buzzer: la novedad de este sketch frente a nopal_accessory.ino.
-//
 const char INDEX_HTML[] PROGMEM = R"NOPALHTML(
 <!doctype html>
 <html lang="es">
@@ -1081,83 +612,130 @@ const char INDEX_HTML[] PROGMEM = R"NOPALHTML(
 <style>
 :root{
   color-scheme:dark;
-  --bg:#101719;
-  --panel:#182326;
-  --panel2:#1e2c2f;
-  --line:#304246;
-  --text:#edf6f1;
-  --muted:#9bb0aa;
-  --green:#65d690;
-  --amber:#f4b55f;
-  --red:#ff6c6c;
-  --cyan:#62c7dc;
+  --bg:#0f1517;
+  --panel:#161f22;
+  --panel2:#1b262a;
+  --line:#2a3a3d;
+  --text:#eef7f2;
+  --muted:#8fa39d;
+  --green:#54e0a0;
+  --amber:#ffb84d;
+  --red:#ff6b6b;
+  --cyan:#5ad0e8;
+  --violet:#b98bff;
+  --pink:#ff8ecb;
 }
 *{box-sizing:border-box}
+html,body{height:100%}
 body{
   margin:0;
-  min-height:100vh;
   background:
-    radial-gradient(circle at 20% 0%,rgba(101,214,144,.10),transparent 35%),
-    linear-gradient(180deg,#11191b,#0c1214);
+    radial-gradient(circle at 12% -10%,rgba(84,224,160,.13),transparent 38%),
+    radial-gradient(circle at 100% 0%,rgba(185,139,255,.09),transparent 35%),
+    linear-gradient(180deg,#0f1517,#0a0f10);
   color:var(--text);
-  font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+  font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
 }
-main{max-width:1080px;margin:auto;padding:24px}
-header{
-  display:flex;justify-content:space-between;align-items:center;
-  gap:16px;margin-bottom:20px
-}
-.brand{display:flex;align-items:center;gap:13px}
+main{max-width:1180px;margin:auto;padding:14px 16px 8px}
+header{display:flex;justify-content:space-between;align-items:center;gap:14px;margin-bottom:12px}
+.brand{display:flex;align-items:center;gap:11px}
 .logo{
-  width:44px;height:44px;border-radius:14px;display:grid;place-items:center;
+  width:36px;height:36px;border-radius:11px;display:grid;place-items:center;
   background:linear-gradient(145deg,#276340,#173326);
-  border:1px solid #4d8b63;font-size:24px
+  border:1px solid #4d8b63;font-size:19px
 }
-h1{font-size:21px;margin:0}.sub{color:var(--muted);font-size:13px}
+h1{font-size:16px;margin:0}.sub{color:var(--muted);font-size:11.5px}
 a{color:var(--green);text-decoration:none}
-.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px}
+a:hover{text-decoration:underline}
+.button{
+  border:1px solid #3a5155;background:#20302f;color:var(--text);
+  padding:7px 12px;border-radius:9px;font-size:12.5px;font-weight:650
+}
+.button:hover{border-color:#6a8a8f}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(225px,1fr));gap:9px;align-items:start}
 .card{
-  grid-column:span 6;background:linear-gradient(145deg,var(--panel),var(--panel2));
-  border:1px solid var(--line);border-radius:18px;padding:18px;
-  box-shadow:0 14px 35px rgba(0,0,0,.20)
+  min-width:0;
+  background:linear-gradient(150deg,var(--panel),var(--panel2));
+  border:1px solid var(--line);border-left:3px solid var(--accent,var(--green));
+  border-radius:13px;padding:11px 13px;
+  box-shadow:0 8px 20px rgba(0,0,0,.18)
 }
-.card.full{grid-column:span 12}
-h2{font-size:14px;text-transform:uppercase;letter-spacing:.08em;color:#c5d8d2;margin:0 0 14px}
-.relays{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+.card.full{grid-column:1/-1}
+#cardRelays{--accent:var(--green)}
+#cardScenes{--accent:var(--pink)}
+#cardWs{--accent:var(--violet)}
+#cardPwm{--accent:var(--violet)}
+#cardBuzzer{--accent:var(--amber)}
+#cardEnv{--accent:var(--cyan)}
+#cardCluster{--accent:#7fd9ff}
+#cardState{--accent:var(--muted)}
+h2{
+  font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;color:#c9dcd6;
+  margin:0 0 9px;display:flex;align-items:center;gap:6px
+}
+h2 .ic{font-size:14px}
+/* minmax(0,1fr) y no 1fr: una pista "1fr" equivale a minmax(auto,1fr) y
+   por lo tanto NO puede achicarse por debajo del ancho mínimo de su
+   contenido. Con nombres de relé largos ("Extractor", "Lampara 1") el
+   nombre + la insignia + el botón no entraban y la ficha se desbordaba
+   fuera de la tarjeta, dejando el botón "Cambiar" cortado a la mitad. */
+.relays{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
 .relay{
-  display:flex;align-items:center;justify-content:space-between;gap:10px;
-  padding:12px;border-radius:13px;background:#111b1d;border:1px solid #2d4043
+  display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;
+  padding:8px 10px;border-radius:10px;background:#101a1c;border:1px solid #263639
 }
-.badge{font-size:12px;padding:4px 9px;border-radius:999px;background:#253336;color:var(--muted)}
-.badge.on{background:rgba(101,214,144,.16);color:var(--green)}
+/* El bloque del nombre sí se achica (min-width:0 vence al mínimo
+   automático de un ítem flex); la insignia y el botón no, porque un
+   "Cambiar" recortado no se puede ni leer ni tocar. Si no queda espacio,
+   flex-wrap los baja a un segundo renglón en vez de desbordar. */
+.relay>div:first-child{min-width:0;flex:1 1 auto}
+.relay .row{flex:0 0 auto}
+.relay b{font-size:13px;overflow-wrap:anywhere}.relay .sub{font-size:10px}
+.badge{font-size:10.5px;padding:3px 8px;border-radius:999px;background:#22302f;color:var(--muted)}
+.badge.on{background:rgba(84,224,160,.16);color:var(--green)}
 button,.button{
-  border:1px solid #3a5155;background:#243438;color:var(--text);
-  padding:9px 12px;border-radius:11px;cursor:pointer;font-weight:650
+  border:1px solid #3a5155;background:#202f31;color:var(--text);
+  padding:7px 10px;border-radius:9px;cursor:pointer;font-weight:650;font-size:12.5px
 }
-button:hover,.button:hover{border-color:#6a8a8f}
-button.green{background:#205d3a;border-color:#39875a}
-button.red{background:#6a2929;border-color:#a64444}
-button.amber{background:#68491e;border-color:#9b7132}
-.row{display:flex;flex-wrap:wrap;gap:9px;align-items:center}
-.scenes{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
-input[type=color]{width:55px;height:40px;padding:3px;background:#101719;border:1px solid #3a5155;border-radius:10px}
-input[type=number]{width:72px}
+button:hover{border-color:#6a8a8f}
+button.green{background:#1d5636;border-color:#39875a}
+button.red{background:#63272a;border-color:#a64444}
+button.amber{background:#63481e;border-color:#9b7132}
+.row{display:flex;flex-wrap:wrap;gap:7px;align-items:center}
+.scenes{display:grid;grid-template-columns:repeat(auto-fit,minmax(66px,1fr));gap:6px}
+input[type=color]{width:42px;height:32px;padding:2px;background:#101719;border:1px solid #3a5155;border-radius:8px}
+input[type=number]{width:56px}
 input[type=number],input[type=range]{
   background:#101719;color:var(--text);border:1px solid #3a5155;
-  border-radius:9px;padding:8px
+  border-radius:8px;padding:6px
 }
-.statgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
-.stat{padding:11px;border-radius:12px;background:#111b1d;border:1px solid #2c3d40}
-.stat b{display:block;font-size:17px}.stat span{font-size:11px;color:var(--muted);text-transform:uppercase}
+.statgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:7px}
+.stat{padding:8px 9px;border-radius:10px;background:#101a1c;border:1px solid #263639}
+.stat b{display:block;font-size:15px}.stat span{font-size:10px;color:var(--muted);text-transform:uppercase}
+.gauge{height:7px;border-radius:999px;background:#101a1c;border:1px solid #263639;overflow:hidden;margin-top:5px}
+.gauge-fill{height:100%;border-radius:999px;background:var(--green);transition:width .5s ease,background .5s ease}
+.envsplit{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.envsplit>div{min-width:0}
+.envlabel{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px}
+.linklist{display:flex;flex-direction:column;gap:5px;margin-top:2px}
+.linklist a{
+  display:flex;align-items:center;gap:6px;font-size:12px;padding:6px 8px;
+  border-radius:8px;background:#101a1c;border:1px solid #263639
+}
+.linklist a:hover{border-color:#4d8b63}
+details summary{cursor:pointer;font-size:11.5px;color:var(--muted);list-style:none;user-select:none}
+details summary::-webkit-details-marker{display:none}
+details summary:before{content:'▸ ';color:var(--green)}
+details[open] summary:before{content:'▾ '}
 pre{
-  white-space:pre-wrap;word-break:break-word;background:#0c1315;
-  padding:12px;border-radius:12px;border:1px solid #26373a;color:#acd4c0
+  white-space:pre-wrap;word-break:break-word;background:#0b1113;
+  padding:9px;border-radius:9px;border:1px solid #223133;color:#a9d1bd;
+  font-size:11px;margin:8px 0 0
 }
-footer{margin:18px 2px;color:var(--muted);font-size:12px}
-@media(max-width:760px){
-  .card,.card.full{grid-column:span 12}
+footer{margin:10px 2px 2px;color:var(--muted);font-size:10px;text-align:center}
+@media(max-width:640px){
   .scenes{grid-template-columns:repeat(2,1fr)}
-  .statgrid{grid-template-columns:repeat(2,1fr)}
+  .envsplit{grid-template-columns:1fr}
 }
 </style>
 </head>
@@ -1166,76 +744,67 @@ footer{margin:18px 2px;color:var(--muted);font-size:12px}
 <header>
   <div class="brand">
     <div class="logo">🌵</div>
-    <div><h1>NOPAL · Accesorio + Buzzer</h1><div class="sub" id="identity">Cargando estado…</div></div>
+    <div><h1>NOPAL</h1><div class="sub" id="identity">Cargando estado…</div></div>
   </div>
-  <a class="button" href="/update">Actualizar firmware</a>
+  <a class="button" href="/update">⇪ Firmware</a>
 </header>
 
 <section class="grid">
-  <article class="card">
-    <h2>Relés</h2>
+  <article class="card" id="cardRelays">
+    <h2><span class="ic">⚡</span>Relés</h2>
     <div class="relays" id="relays"></div>
   </article>
 
   <article class="card" id="cardScenes">
-    <h2>Escenas rápidas (NeoPixel)</h2>
-    <p class="sub">Color fijo para toda la tira -- este firmware genérico no
-      tiene parpadeo ni animaciones como el panel del ESP-12E. Si el
-      buzzer está activo, cada escena también dispara su patrón de
-      sonido.</p>
+    <h2><span class="ic">🎬</span>Escenas rápidas</h2>
     <div class="scenes">
       <button class="green" onclick="scene('READY')">Listo</button>
       <button onclick="scene('WORKING')">Trabajando</button>
       <button class="amber" onclick="scene('WAITING')">En espera</button>
       <button class="red" onclick="scene('ALARM')">Alarma</button>
-      <button onclick="scene('MAINTENANCE')">Mantenimiento</button>
-      <button onclick="scene('DISCONNECTED')">Desconectado</button>
-      <button onclick="scene('OFF')">Apagar LEDs</button>
+      <button onclick="scene('MAINTENANCE')">Mantenim.</button>
+      <button onclick="scene('DISCONNECTED')">Desconect.</button>
+      <button onclick="scene('OFF')">Apagar</button>
     </div>
   </article>
 
   <article class="card" id="cardWs">
-    <h2>NeoPixel global</h2>
+    <h2><span class="ic">🌈</span>NeoPixel</h2>
     <div class="row">
       <label id="wsStripLabel" style="display:none">Tira</label>
       <select id="wsStrip" style="display:none" onchange="onWsStripChange()"></select>
       <input id="wsColor" type="color" value="#41d17d">
-      <button onclick="sendWsColor()">Aplicar color</button>
-      <button class="red" onclick="sendWsOff()">Apagar tira</button>
+      <button onclick="sendWsColor()">Color</button>
+      <button class="red" onclick="sendWsOff()">Apagar</button>
     </div>
     <p class="sub" id="wsInfo">—</p>
-  </article>
-
-  <article class="card" id="cardWsPixel">
-    <h2>NeoPixel individual</h2>
-    <div class="row">
-      <label>LED</label>
-      <input id="pixel" type="number" min="1" value="1">
-      <label>Cant.</label>
-      <input id="pixelCount" type="number" min="1" value="1">
-      <input id="pixelColor" type="color" value="#ff8c32">
-      <button onclick="sendPixel()">Aplicar</button>
-    </div>
-    <p class="sub">Usa el selector de tira de "NeoPixel global" de arriba
-      -- esta ficha manda el segmento a la misma tira que esté elegida ahí.
-      La numeración empieza en 1. "Cant." son LEDs consecutivos a partir
-      de ese número.</p>
+    <details id="cardWsPixel">
+      <summary>Pixel individual</summary>
+      <div class="row" style="margin-top:8px">
+        <label>LED</label>
+        <input id="pixel" type="number" min="1" value="1">
+        <label>Cant.</label>
+        <input id="pixelCount" type="number" min="1" value="1">
+        <input id="pixelColor" type="color" value="#ff8c32">
+        <button onclick="sendPixel()">Aplicar</button>
+      </div>
+    </details>
   </article>
 
   <article class="card" id="cardPwm">
-    <h2>Tira RGB analógica (PWM)</h2>
+    <h2><span class="ic">🎨</span>RGB analógico</h2>
     <div class="row">
       <input id="pwmColor" type="color" value="#41d17d">
-      <button onclick="sendPwmColor()">Aplicar color</button>
+      <button onclick="sendPwmColor()">Color</button>
       <button class="red" onclick="sendPwmOff()">Apagar</button>
     </div>
   </article>
 
   <article class="card" id="cardBuzzer">
-    <h2>Buzzer activo</h2>
+    <h2><span class="ic">🔔</span>Buzzer</h2>
     <div class="row">
       <button onclick="buzzer('BEEP')">Beep</button>
-      <button onclick="buzzer('DOUBLE')">Doble beep</button>
+      <button onclick="buzzer('DOUBLE')">Doble</button>
       <button class="green" onclick="buzzer('READY')">Listo</button>
       <button class="amber" onclick="buzzer('WAITING')">Espera</button>
       <button class="red" onclick="buzzer('ALARM')">Alarma</button>
@@ -1244,29 +813,52 @@ footer{margin:18px 2px;color:var(--muted);font-size:12px}
     <p class="sub" id="buzzerInfo">—</p>
   </article>
 
-  <article class="card" id="cardDht">
-    <h2>Sensor DHT11</h2>
-    <div class="statgrid">
-      <div class="stat"><b id="dhtTemp">—</b><span>Temperatura</span></div>
-      <div class="stat"><b id="dhtHum">—</b><span>Humedad</span></div>
+  <article class="card" id="cardEnv" style="display:none">
+    <h2><span class="ic">🌡️</span>Ambiente y energía</h2>
+    <div class="envsplit">
+      <div id="envDhtBlock" style="display:none">
+        <div class="envlabel">Ambiente</div>
+        <div class="statgrid">
+          <div class="stat"><b id="dhtTemp">—</b><span>Temp.</span></div>
+          <div class="stat"><b id="dhtHum">—</b><span>Humedad</span></div>
+        </div>
+      </div>
+      <div id="envPowerBlock" style="display:none">
+        <div class="envlabel">Batería</div>
+        <div class="statgrid">
+          <div class="stat"><b id="powerVoltage">—</b><span>Voltaje</span></div>
+          <div class="stat"><b id="powerSoc">—</b><span>Carga</span></div>
+        </div>
+        <div class="gauge"><div class="gauge-fill" id="powerGauge" style="width:0%"></div></div>
+      </div>
     </div>
-    <p class="sub" id="dhtInfo">—</p>
   </article>
 
-  <article class="card full">
-    <h2>Estado del dispositivo</h2>
+  <article class="card" id="cardCluster" style="display:none">
+    <h2><span class="ic">🔗</span>Clúster NOPAL</h2>
+    <div class="statgrid">
+      <div class="stat"><b id="clusterRole">—</b><span>Rol</span></div>
+      <div class="stat"><b id="clusterPeers">—</b><span>Nodos</span></div>
+    </div>
+    <div class="linklist" id="clusterLinks"></div>
+  </article>
+
+  <article class="card full" id="cardState">
+    <h2><span class="ic">📟</span>Estado del dispositivo</h2>
     <div class="statgrid">
       <div class="stat"><b id="wifi">—</b><span>Wi-Fi</span></div>
       <div class="stat"><b id="ip">—</b><span>Dirección IP</span></div>
       <div class="stat"><b id="scene">—</b><span>Escena</span></div>
       <div class="stat"><b id="relaysOn">—</b><span>Relés activos</span></div>
-      <div class="stat"><b id="buzzerState">—</b><span>Buzzer</span></div>
     </div>
-    <pre id="details">Esperando datos…</pre>
+    <details>
+      <summary>Detalles técnicos</summary>
+      <pre id="details">Esperando datos…</pre>
+    </details>
   </article>
 </section>
 
-<footer>NOPAL Firmware 4.2-ff · Accesorio genérico ESP32 / ESP8266 con buzzer · Protocolo 4</footer>
+<footer>NOPAL Firmware · Accesorio genérico ESP32 / ESP8266 con buzzer · Protocolo 4</footer>
 </main>
 <script>
 const enc=o=>new URLSearchParams(o);
@@ -1401,11 +993,11 @@ async function refresh(){
     const hasBuzzer=!!(s.io&&s.io.buzzer);
     const hasDht=!!(s.dht&&s.dht.enabled);
     document.getElementById('cardWs').style.display=hasWs?'':'none';
-    document.getElementById('cardWsPixel').style.display=hasWs?'':'none';
     document.getElementById('cardScenes').style.display=hasWs?'':'none';
     document.getElementById('cardPwm').style.display=hasPwm?'':'none';
     document.getElementById('cardBuzzer').style.display=hasBuzzer?'':'none';
-    document.getElementById('cardDht').style.display=hasDht?'':'none';
+    document.getElementById('envDhtBlock').style.display=hasDht?'':'none';
+    updateEnvCardVisibility();
 
     lastStatus=s;
     if(hasWs){
@@ -1416,7 +1008,6 @@ async function refresh(){
     buzzerSceneSounds=hasBuzzer&&!!(s.buzzer&&s.buzzer.scene_sounds);
 
     if(hasBuzzer){
-      document.getElementById('buzzerState').textContent=s.buzzer.pattern;
       document.getElementById('buzzerInfo').textContent=
         'GPIO '+s.buzzer.gpio+' · patrón '+s.buzzer.pattern+' · '+(s.buzzer.on?'sonando':'apagado')+
         (buzzerSceneSounds?' · suena con las escenas':' · silencioso con las escenas');
@@ -1426,8 +1017,6 @@ async function refresh(){
       const dhtValid=!!s.dht.valid;
       document.getElementById('dhtTemp').textContent=dhtValid?s.dht.t_c.toFixed(1)+' °C':'—';
       document.getElementById('dhtHum').textContent=dhtValid?s.dht.h_pct.toFixed(1)+' %':'—';
-      document.getElementById('dhtInfo').textContent=
-        'GPIO '+s.dht.pin+' · '+(dhtValid?'lectura OK':'sin lectura válida todavía (reintenta cada '+(s.dht.min_interval_ms/1000)+'s)');
     }
 
     document.getElementById('details').textContent=
@@ -1447,22 +1036,82 @@ async function refresh(){
     document.getElementById('identity').textContent='Sin respuesta del dispositivo';
   }
 }
+
+function updateEnvCardVisibility(){
+  const dhtOn=document.getElementById('envDhtBlock').style.display!=='none';
+  const powerOn=document.getElementById('envPowerBlock').style.display!=='none';
+  document.getElementById('cardEnv').style.display=(dhtOn||powerOn)?'':'none';
+}
+
+async function refreshPower(){
+  const block=document.getElementById('envPowerBlock');
+  try{
+    const r=await fetch('/api/power',{cache:'no-store'});
+    if(!r.ok){block.style.display='none';updateEnvCardVisibility();return}
+    const p=await r.json();
+    if(!p.valid){block.style.display='none';updateEnvCardVisibility();return}
+    block.style.display='';
+    updateEnvCardVisibility();
+    document.getElementById('powerVoltage').textContent=p.voltage_v.toFixed(2)+' V';
+    document.getElementById('powerSoc').textContent=p.soc_pct.toFixed(0)+' %';
+    const pct=Math.max(0,Math.min(100,p.soc_pct));
+    const gauge=document.getElementById('powerGauge');
+    gauge.style.width=pct+'%';
+    gauge.style.background=pct<20?'var(--red)':pct<50?'var(--amber)':'var(--green)';
+  }catch(e){
+    block.style.display='none';
+    updateEnvCardVisibility();
+  }
+}
+
+async function refreshCluster(){
+  const card=document.getElementById('cardCluster');
+  const links=document.getElementById('clusterLinks');
+  try{
+    const r=await fetch('/api/cluster',{cache:'no-store'});
+    if(!r.ok){card.style.display='none';return}
+    const c=await r.json();
+    card.style.display='';
+    if(c.role==='master'){
+      const list=c.slaves||[];
+      document.getElementById('clusterRole').textContent='Maestro';
+      document.getElementById('clusterPeers').textContent=list.length;
+      links.innerHTML=list.length>0
+        ?list.map(x=>{
+            const label=(x.caps&&x.caps.hostname)?x.caps.hostname:x.ip;
+            return `<a href="http://${x.ip}/" target="_blank">🔌 ${label} (${x.ip})</a>`;
+          }).join('')
+        :'<span class="sub">Sin esclavos todavía</span>';
+    }else if(c.role==='slave'){
+      document.getElementById('clusterRole').textContent='Esclavo';
+      document.getElementById('clusterPeers').textContent='1';
+      links.innerHTML=`<a href="http://${c.master_ip}/" target="_blank">👑 Maestro (${c.master_ip})</a>`;
+    }else{
+      document.getElementById('clusterRole').textContent='Eligiendo…';
+      document.getElementById('clusterPeers').textContent='—';
+      links.innerHTML='<span class="sub">Buscando maestro en la red</span>';
+    }
+  }catch(e){
+    card.style.display='none';
+  }
+}
+
 refresh();setInterval(refresh,2500);
+refreshPower();setInterval(refreshPower,4000);
+refreshCluster();setInterval(refreshCluster,4000);
 </script>
 </body>
 </html>
 )NOPALHTML";
-
-
-// ============================================================================
-// SERVIDOR WEB / OTA
-// ============================================================================
 
 #if defined(ESP32)
   WebServer server(HTTP_PORT);
 #elif defined(ESP8266)
   ESP8266WebServer server(HTTP_PORT);
 #endif
+
+#include "nopal_cluster.h"
+#include "nopal_power.h"
 
 bool webServerStarted = false;
 bool mdnsStarted = false;
@@ -1473,16 +1122,7 @@ uint32_t lastWifiReconnectAttemptMs = 0;
 
 String recoveryApSsid;
 
-
-// ============================================================================
-// VARIABLES
-// ============================================================================
-
 String inputLine;
-
-
-// En ESP32 Core 2.x, ledcWrite() utiliza el canal.
-// En ESP32 Core 3.x, ledcWrite() utiliza directamente el pin.
 
 #if defined(ESP32) && ESP_ARDUINO_VERSION_MAJOR < 3
 
@@ -1491,30 +1131,6 @@ const uint8_t PWM_CHANNEL_G = 1;
 const uint8_t PWM_CHANNEL_B = 2;
 
 #endif
-
-
-// ============================================================================
-// ESTADO DEL BUZZER ACTIVO
-// ============================================================================
-//
-// Estructuras y patrones portados tal cual de NOPAL_ESP12E_BUZZER.ino:
-// cada patrón es una lista de pasos ON/OFF con su duración en ms, que
-// serviceBuzzer() va recorriendo sin bloquear (ver la sección "BUZZER
-// ACTIVO — PATRONES NO BLOQUEANTES" más abajo).
-//
-
-// BuzzerStep/BuzzerPattern (struct/enum) se definen al principio del
-// archivo, justo después de los #include -- no acá donde se usaban antes.
-// El auto-prototipado de Arduino inserta sus propios prototipos generados
-// cerca del principio del archivo, y si una función usa un tipo propio
-// (enum/struct) como parámetro y ese tipo todavía no existe en ese punto,
-// el prototipo autogenerado queda roto ("'BuzzerPattern' was not declared
-// in this scope") -- confirmado compilando de verdad (Arduino IDE): ni
-// siquiera alcanzaba con un forward declaration puesto acá, en el medio
-// del archivo. Definiendo el tipo real arriba de todo, antes de cualquier
-// función, el problema desaparece sin importar dónde inserte Arduino sus
-// prototipos. Mismo criterio aplicado a Adafruit_NeoPixel (ver el
-// #include de esa librería, movido junto a los demás #include arriba).
 
 const BuzzerStep BUZZER_PATTERN_CONTINUOUS[] = {
   {true, 1000}
@@ -1560,11 +1176,6 @@ bool buzzerPatternRepeats = false;
 bool buzzerOutputOn = false;
 uint32_t buzzerNextStepAtMs = 0;
 
-
-// ============================================================================
-// FUNCIONES AUXILIARES
-// ============================================================================
-
 uint8_t clampColor(int value) {
   if (value < 0) {
     return 0;
@@ -1577,29 +1188,13 @@ uint8_t clampColor(int value) {
   return static_cast<uint8_t>(value);
 }
 
-
 bool validRelayIndex(int index) {
   return index >= 0 && index < RELAY_COUNT;
 }
 
-
-// Usada por el motor de patrones del buzzer (serviceBuzzer() /
-// startBuzzerPattern()) para no programar duraciones de 0 ms -- portada
-// de NOPAL_ESP12E_BUZZER.ino.
 uint32_t maxU32(uint32_t first, uint32_t second) {
   return first > second ? first : second;
 }
-
-
-// ============================================================================
-// LED DE ESTADO
-// ============================================================================
-//
-// Fijo encendido en cuanto la placa termina de arrancar (USB, WiFi o
-// ambos) -- indica "el firmware está vivo", nunca se apaga en operación
-// normal. Parpadea solo mientras hay wifi configurado y NO está
-// conectado (reconectando/AP de recuperación tras perder la red) -- ver
-// serviceStatusLed(), llamada en cada vuelta de serviceNetwork().
 
 #if STATUS_LED_ENABLE
 
@@ -1637,10 +1232,6 @@ void serviceStatusLed() {
 
 #endif
 
-
-// Devuelve el mismo texto que antes imprimía printChipIdentification()
-// directo por Serial -- factorizado en 4.1 para poder reusarlo también en
-// buildStatusJson() (campo "chip") sin duplicar el #if ESP32/ESP8266.
 String chipModelText() {
 
 #if defined(ESP32)
@@ -1654,15 +1245,10 @@ String chipModelText() {
 #endif
 }
 
-
 void printChipIdentification() {
   Serial.print(chipModelText());
 }
 
-
-// Texto legible de la razón del último reinicio -- útil para diagnosticar
-// reinicios inesperados (brownout, watchdog, panic) desde el panel web sin
-// tener que estar mirando el monitor Serial en el momento en que pasan.
 String resetReasonText() {
 
 #if defined(ESP32)
@@ -1688,7 +1274,6 @@ String resetReasonText() {
 #endif
 }
 
-
 String chipSuffix() {
   char suffix[9] = {0};
 
@@ -1713,17 +1298,12 @@ String chipSuffix() {
   return String(suffix);
 }
 
-
 bool wifiCredentialsConfigured() {
   const String ssid = String(NOPAL_WIFI_SSID);
 
-  // "TU_RED_WIFI" es el valor de ejemplo en secrets.h.example: si nadie lo
-  // cambió, no tiene caso intentar conectarse, mejor ir directo al punto de
-  // acceso de recuperación.
   return ssid.length() > 0 &&
          ssid != "TU_RED_WIFI";
 }
-
 
 String activeIpAddress() {
   if (WiFi.status() == WL_CONNECTED) {
@@ -1736,7 +1316,6 @@ String activeIpAddress() {
 
   return "0.0.0.0";
 }
-
 
 String wifiModeText() {
   if (WiFi.status() == WL_CONNECTED && recoveryApActive) {
@@ -1753,7 +1332,6 @@ String wifiModeText() {
 
   return "offline";
 }
-
 
 String jsonEscape(const String& input) {
   String output;
@@ -1792,11 +1370,6 @@ String jsonEscape(const String& input) {
   return output;
 }
 
-
-// ============================================================================
-// RELÉS
-// ============================================================================
-
 void setRelay(uint8_t index, bool on) {
   if (index >= RELAY_COUNT) {
     return;
@@ -1809,7 +1382,6 @@ void setRelay(uint8_t index, bool on) {
     outputLevel ? HIGH : LOW
   );
 }
-
 
 bool getRelay(uint8_t index) {
   if (index >= RELAY_COUNT) {
@@ -1824,11 +1396,6 @@ bool getRelay(uint8_t index) {
     : pinIsHigh;
 }
 
-
-// ============================================================================
-// PWM RGB
-// ============================================================================
-
 void setupPwmLed() {
 
 #if PWM_LED_ENABLE
@@ -1841,14 +1408,12 @@ void setupPwmLed() {
 
     #if ESP_ARDUINO_VERSION_MAJOR >= 3
 
-      // Arduino-ESP32 Core 3.x
       ledcAttach(PWM_LED_PIN_R, 5000, 8);
       ledcAttach(PWM_LED_PIN_G, 5000, 8);
       ledcAttach(PWM_LED_PIN_B, 5000, 8);
 
     #else
 
-      // Arduino-ESP32 Core 2.x
       ledcSetup(PWM_CHANNEL_R, 5000, 8);
       ledcSetup(PWM_CHANNEL_G, 5000, 8);
       ledcSetup(PWM_CHANNEL_B, 5000, 8);
@@ -1861,7 +1426,6 @@ void setupPwmLed() {
 
   #elif defined(ESP8266)
 
-    // El ESP8266 utiliza PWM por software.
     analogWriteRange(255);
     analogWriteFreq(5000);
 
@@ -1869,7 +1433,6 @@ void setupPwmLed() {
 
 #endif
 }
-
 
 void setPwmLedColor(uint8_t red, uint8_t green, uint8_t blue) {
 
@@ -1902,16 +1465,6 @@ void setPwmLedColor(uint8_t red, uint8_t green, uint8_t blue) {
 #endif
 }
 
-
-// ============================================================================
-// WS2812
-// ============================================================================
-
-// Implementación real, compartida por las 3 tiras -- setWs2812Color()/
-// setWs2812Color2()/setWs2812Color3() de abajo son wrappers de 3
-// argumentos (mismo criterio que setPwmLedColor) para poder seguir
-// pasándose como function pointer a parseAndSetColor(), que no sabe nada
-// de índices de tira.
 void setWs2812ColorAt(uint8_t stripIndex, uint8_t red, uint8_t green, uint8_t blue) {
 
 #if WS2812_ENABLE
@@ -1936,7 +1489,6 @@ void setWs2812Color2(uint8_t red, uint8_t green, uint8_t blue) {
 void setWs2812Color3(uint8_t red, uint8_t green, uint8_t blue) {
   setWs2812ColorAt(2, red, green, blue);
 }
-
 
 bool setWs2812SegmentAt(
   uint8_t stripIndex,
@@ -1981,29 +1533,6 @@ bool setWs2812Segment(
   return setWs2812SegmentAt(0, start, count, red, green, blue, response);
 }
 
-
-// Barrido de arranque en verde NOPAL (#22c55e / RGB 34,197,94 -- el mismo
-// verde de marca que usa el resto del proyecto, ver --green/--accent en
-// style.css y los mismos valores en app.js) sobre la tira WS2812: prende
-// los píxeles uno por uno de punta a punta, sostiene la tira completa
-// encendida un instante y la apaga de nuevo. Se llama UNA sola vez desde
-// setup(), antes de que arranque Wi-Fi -- a propósito NO es un efecto con
-// estado como serviceBuzzer()/serviceStatusLed(): no vuelve a llamarse
-// desde loop(), así que termina sola y no compite ni pisa ningún color real
-// que NOPAL o el panel web le pidan a la tira una vez que la placa terminó
-// de arrancar (la tira queda apagada al salir de acá, igual que ya la deja
-// el strip.clear() de más arriba en setup(), hasta que llegue el primer
-// comando WS/WSSEG real).
-//
-// Reutiliza setWs2812Color()/setWs2812Segment() (el mismo mecanismo que ya
-// exponen los comandos WS/WSSEG) en vez de tocar el objeto `strip`
-// directo, para no duplicar acá el driver NeoPixel.
-//
-// El tiempo total se reparte entre WS2812_COUNT píxeles con un presupuesto
-// fijo, así que aunque alguien suba la cantidad de LEDs en el mapeo de
-// pines el barrido no se alarga -- entre el barrido y la pausa final queda
-// bien por debajo del margen de 1-2 s que nos podemos permitir sin demorar
-// Wi-Fi/HTTP.
 void playStartupAnimation() {
 
 #if WS2812_ENABLE
@@ -2030,18 +1559,6 @@ void playStartupAnimation() {
 #endif
 }
 
-
-// ============================================================================
-// BUZZER ACTIVO — PATRONES NO BLOQUEANTES
-// ============================================================================
-//
-// Motor de patrones portado tal cual de NOPAL_ESP12E_BUZZER.ino: cada
-// patrón es una lista de pasos ON/OFF con su duración, y serviceBuzzer()
-// los va avanzando sin bloquear -- se llama en cada vuelta de loop(),
-// igual que serviceNetwork(), así que Wi-Fi, OTA, el panel web y el
-// resto de comandos siguen respondiendo mientras el buzzer está sonando.
-//
-
 void setBuzzerOutput(bool on) {
 
 #if BUZZER_ENABLE
@@ -2050,14 +1567,10 @@ void setBuzzerOutput(bool on) {
 
   #if BUZZER_PASSIVE
 
-    // Pasivo: no alcanza con un nivel fijo, hace falta una señal
-    // oscilando -- PWM por hardware a BUZZER_TONE_HZ mientras esté "on",
-    // 0 Hz (silencio) mientras esté "off". Mismo criterio de rama por
-    // versión de Core que ya usa el PWM RGB (ver setupPwmLed más arriba).
     #if defined(ESP32)
 
       #if ESP_ARDUINO_VERSION_MAJOR >= 3
-        ledcWriteTone(BUZZER_PIN, on ? BUZZER_TONE_HZ : 0);
+        ledcWrite(BUZZER_PIN, on ? 512 : 0);
       #else
         ledcWriteTone(PWM_CHANNEL_BUZZER, on ? BUZZER_TONE_HZ : 0);
       #endif
@@ -2074,8 +1587,6 @@ void setBuzzerOutput(bool on) {
 
   #else
 
-    // Activo: alcanza con un nivel fijo, el buzzer trae su propio
-    // oscilador -- comportamiento de siempre, sin cambios.
     const uint8_t level =
       BUZZER_ACTIVE_HIGH
         ? (on ? HIGH : LOW)
@@ -2088,7 +1599,6 @@ void setBuzzerOutput(bool on) {
 #endif
 }
 
-
 void initializeBuzzerSafely() {
 
 #if BUZZER_ENABLE
@@ -2097,9 +1607,6 @@ void initializeBuzzerSafely() {
 
     #if defined(ESP32)
 
-      // Igual que setupPwmLed(): en Core 3.x se asocia el pin directo,
-      // en Core 2.x hace falta un canal LEDC explícito y separado del
-      // que ya usa el PWM RGB (ver PWM_CHANNEL_BUZZER más arriba).
       #if ESP_ARDUINO_VERSION_MAJOR >= 3
         ledcAttach(BUZZER_PIN, BUZZER_TONE_HZ, 10);
       #else
@@ -2109,8 +1616,6 @@ void initializeBuzzerSafely() {
 
     #elif defined(ESP8266)
 
-      // tone()/noTone() ya manejan el pinMode solos en ESP8266.
-
     #endif
 
     setBuzzerOutput(false);
@@ -2119,9 +1624,6 @@ void initializeBuzzerSafely() {
 
     const uint8_t offLevel = BUZZER_ACTIVE_HIGH ? LOW : HIGH;
 
-    // Precarga el nivel apagado antes de cambiar a OUTPUT, igual que ya
-    // hacen los relés en setup(), para reducir al mínimo cualquier pulso
-    // accidental durante el arranque.
     digitalWrite(BUZZER_PIN, offLevel);
     pinMode(BUZZER_PIN, OUTPUT);
     setBuzzerOutput(false);
@@ -2130,7 +1632,6 @@ void initializeBuzzerSafely() {
 
 #endif
 }
-
 
 String buzzerPatternName(BuzzerPattern pattern) {
   switch (pattern) {
@@ -2149,7 +1650,6 @@ String buzzerPatternName(BuzzerPattern pattern) {
   return "UNKNOWN";
 }
 
-
 void stopBuzzer() {
   buzzerPattern = BuzzerPattern::OFF;
   activeBuzzerSteps = nullptr;
@@ -2159,7 +1659,6 @@ void stopBuzzer() {
   buzzerNextStepAtMs = 0;
   setBuzzerOutput(false);
 }
-
 
 void startBuzzerPattern(
   BuzzerPattern pattern,
@@ -2181,7 +1680,6 @@ void startBuzzerPattern(
   setBuzzerOutput(activeBuzzerSteps[0].on);
   buzzerNextStepAtMs = millis() + maxU32(1UL, activeBuzzerSteps[0].durationMs);
 }
-
 
 bool startBuzzerFromText(String patternText) {
   patternText.trim();
@@ -2285,7 +1783,6 @@ bool startBuzzerFromText(String patternText) {
   return false;
 }
 
-
 void serviceBuzzer() {
 
 #if BUZZER_ENABLE
@@ -2320,16 +1817,10 @@ void serviceBuzzer() {
 #endif
 }
 
-
-// ============================================================================
-// WI-FI
-// ============================================================================
-
 void setWifiHostname() {
 
 #if defined(ESP32)
 
-  // Debe llamarse antes de iniciar Wi-Fi.
   WiFi.setHostname(NOPAL_HOSTNAME);
 
 #elif defined(ESP8266)
@@ -2338,7 +1829,6 @@ void setWifiHostname() {
 
 #endif
 }
-
 
 void startRecoveryAccessPoint() {
   if (recoveryApActive) {
@@ -2375,7 +1865,6 @@ void startRecoveryAccessPoint() {
   }
 }
 
-
 void startMdnsIfPossible() {
   if (mdnsStarted || WiFi.status() != WL_CONNECTED) {
     return;
@@ -2392,7 +1881,6 @@ void startMdnsIfPossible() {
     Serial.println("WARN:MDNS_START_FAILED");
   }
 }
-
 
 void setupWifi() {
   setWifiHostname();
@@ -2445,7 +1933,6 @@ void setupWifi() {
   startRecoveryAccessPoint();
 }
 
-
 void maintainWifiConnection() {
   const bool connected = WiFi.status() == WL_CONNECTED;
 
@@ -2497,17 +1984,9 @@ void maintainWifiConnection() {
   );
 }
 
-
-// ============================================================================
-// SERVIDOR WEB Y ELEGANTOTA
-// ============================================================================
-
 String buildStatusJson() {
   String json;
-  // 1536 alcanzaba en nopal_accessory.ino 4.1 -- Nopal_FF suma el objeto
-  // "buzzer" completo (gpio/patrón/repetición/scene_sounds) más el campo
-  // "buzzer"/"buzzer_pin" dentro de "io", así que se reserva más para
-  // evitar reallocations a mitad de armado.
+
   json.reserve(1792);
 
   json += "{";
@@ -2587,12 +2066,6 @@ String buildStatusJson() {
   json += "\"";
   json += "},";
 
-  // Estado individual de cada relé -- agregado en 4.1 para que el panel
-  // web nuevo (INDEX_HTML) pueda pintar el badge ON/OFF de cada uno sin
-  // tener que pegarle a /api/relay una vez por relé. Mismo shape que ya
-  // usaba NOPAL_ESP12E.ino y que probe_wifi_board() en accessory_service.py
-  // ya intenta leer con data.get("relays", []) -- backend viejo que no
-  // conocía este campo simplemente seguía usando io.relays (el conteo).
   json += "\"relays\":[";
 
   for (uint8_t index = 0; index < RELAY_COUNT; index++) {
@@ -2613,9 +2086,6 @@ String buildStatusJson() {
 
   json += "],";
 
-  // Estado del buzzer -- no existía en nopal_accessory.ino, lo agrega
-  // Nopal_FF. Mismo criterio que "relays": un backend viejo que no
-  // conoce este campo simplemente lo ignora.
   json += "\"buzzer\":{";
   json += "\"enabled\":";
   json += BUZZER_ENABLE ? "true" : "false";
@@ -2633,10 +2103,6 @@ String buildStatusJson() {
   json += (NOPAL_BUZZER_SCENE_SOUNDS != 0) ? "true" : "false";
   json += "},";
 
-  // Sensor DHT11 -- ver el comentario grande en "SENSOR DHT11" más arriba.
-  // dhtRead() cachea el resultado y solo dispara una lectura nueva si ya
-  // venció DHT_MIN_INTERVAL_MS, así que llamarlo acá en cada /api/status
-  // no golpea al sensor más seguido de lo que soporta.
   json += "\"dht\":{";
   json += "\"enabled\":";
 #if DHT_ENABLE
@@ -2679,11 +2145,7 @@ String buildStatusJson() {
   json += "\"relays\":";
   json += String(RELAY_COUNT);
   json += ",";
-  // Mismo criterio que "buzzer.active_high": se expone acá para poder
-  // confirmar desde afuera (sin monitor Serial) con qué polaridad está
-  // compilada la placa, útil para diagnosticar un NOPAL_RELAY_ACTIVE_LOW
-  // mal configurado en secrets.h (ver el comentario de esa macro más
-  // arriba, junto a RELAY_ACTIVE_LOW).
+
   json += "\"relay_active_low\":";
   json += RELAY_ACTIVE_LOW ? "true" : "false";
   json += ",";
@@ -2711,9 +2173,6 @@ String buildStatusJson() {
   json += ",\"ws2812_pin\":";
   json += String(WS2812_PIN);
 
-  // Tiras 2 y 3: siempre se reportan (aunque estén desactivadas) para que
-  // el panel sepa cuáles ofrecer en el selector de tira, igual que ya
-  // hace con "ws2812"/"ws2812_count" para la tira 0.
   json += ",\"ws2812_2\":";
   json += ws2812StripEnabled(1) ? "true" : "false";
   json += ",\"ws2812_2_count\":";
@@ -2744,22 +2203,6 @@ String buildStatusJson() {
   return json;
 }
 
-
-// Protege los endpoints de control (relé/LED/buzzer) con las mismas
-// credenciales que ya usa ElegantOTA (NOPAL_OTA_USERNAME/PASSWORD) -- son
-// las que el usuario ya tiene que configurar en secrets.h y las mismas
-// que NOPAL le pide al registrar un accesorio por WiFi, no hace falta una
-// credencial nueva. /api/status y /health quedan sin auth a propósito
-// (mismo criterio que ya tenían: son de solo lectura, no cambian nada de
-// la placa).
-// Declaración explícita: el auto-prototipado de Arduino (que normalmente
-// permite llamar una función definida más abajo en el mismo .ino sin
-// declararla antes) no resuelve bien un parámetro de puntero a función
-// como el de parseAndSetColor -- confirmado compilando de verdad (PlatformIO):
-// sin esto, "parseAndSetColor" no se declaró en este ámbito" adentro de
-// los lambda de setupWebServer(). handleRelayCommand() y
-// handleBuzzerCommand() no necesitan esto porque su firma es más simple
-// y el auto-prototipado sí la resuelve.
 bool parseAndSetColor(
   const String& command,
   uint8_t prefixLength,
@@ -2767,7 +2210,6 @@ bool parseAndSetColor(
   String& response
 );
 bool parseAndSetSegment(const String& command, uint8_t prefixLength, String& response, uint8_t stripIndex = 0);
-
 
 bool checkApiAuth() {
   if (server.authenticate(NOPAL_OTA_USERNAME, NOPAL_OTA_PASSWORD)) {
@@ -2778,12 +2220,8 @@ bool checkApiAuth() {
   return false;
 }
 
-
 void setupWebServer() {
-  // Desde 4.1 sirve el panel NOPAL embebido (INDEX_HTML) en vez de
-  // redirigir directo a /update -- mismo criterio que NOPAL_ESP12E.ino:
-  // protegido con las mismas credenciales que ElegantOTA, y con un botón
-  // adentro del panel para quien de verdad quiera ir a /update.
+
   server.on("/", HTTP_GET, []() {
     if (!checkApiAuth()) return;
 
@@ -2806,23 +2244,11 @@ void setupWebServer() {
     server.send(200, "text/plain", "OK");
   });
 
-
-  // ------------------------------------------------------------------------
-  // Control por red -- mismo protocolo de texto que ya habla Serial,
-  // reusando los mismos handlers (handleRelayCommand/parseAndSetColor) para
-  // que la placa se comporte exactamente igual sin importar por dónde
-  // llegó el comando.
-  // ------------------------------------------------------------------------
-
   server.on("/api/relay", HTTP_GET, []() {
     if (!checkApiAuth()) return;
 
     const String command = String("R") + server.arg("n") + "?";
-    // Default por si handleRelayCommand() ni siquiera reconoce la forma
-    // del comando (ej. falta "n" -> "R?", que sí matchea el formato de
-    // consulta y da ERR:INVALID_RELAY -- pero por las dudas, nunca dejar
-    // `response` vacío, o el llamante HTTP recibiría un 200 engañoso con
-    // cuerpo vacío en vez de un error).
+
     String response = "ERR:INVALID_RELAY";
     handleRelayCommand(command, response);
 
@@ -2838,11 +2264,7 @@ void setupWebServer() {
 
     const bool on = server.arg("on") == "true" || server.arg("on") == "1";
     const String command = String("R") + server.arg("n") + ":" + (on ? "ON" : "OFF");
-    // Mismo motivo que en el GET de arriba: si falta "n" el comando queda
-    // como "R:ON"/"R:OFF" (sin dígitos entre "R" y ":"), una forma que
-    // handleRelayCommand() ni reconoce como comando de relé (devuelve
-    // false y no toca `response`) -- sin este default se mandaría un 200
-    // con el cuerpo vacío en vez de avisar el error.
+
     String response = "ERR:INVALID_RELAY";
     handleRelayCommand(command, response);
 
@@ -2869,8 +2291,7 @@ void setupWebServer() {
 
 #if WS2812_ENABLE
     if (mode == "ws2812") {
-      // strip=0 (o sin mandar el parámetro) es la tira de siempre -- 1 y 2
-      // son las opcionales (ver WS2812_2_ENABLE/WS2812_3_ENABLE).
+
       const int stripArg = server.hasArg("strip") ? server.arg("strip").toInt() : 0;
       const uint8_t stripIndex = (stripArg == 1 || stripArg == 2) ? stripArg : 0;
 
@@ -2894,16 +2315,6 @@ void setupWebServer() {
       response
     );
   });
-
-
-  // ------------------------------------------------------------------------
-  // Buzzer por red -- mismo criterio que /api/relay y /api/led: traduce
-  // los argumentos HTTP a un comando de texto y reusa handleBuzzerCommand()
-  // para que la placa se comporte igual sin importar si el comando llegó
-  // por Serial o por HTTP. Tanto el GET (consulta) como el POST (acción)
-  // quedan atrás de checkApiAuth(), igual que /api/relay -- acá no hay
-  // ninguna ruta de buzzer sin autenticar.
-  // ------------------------------------------------------------------------
 
   server.on("/api/buzzer", HTTP_GET, []() {
     if (!checkApiAuth()) return;
@@ -2932,12 +2343,6 @@ void setupWebServer() {
     );
   });
 
-
-  // ------------------------------------------------------------------------
-  // Pantalla LED BLE -- ver bloque "PANTALLA LED BLE (relay, solo ESP32)"
-  // más arriba para el porqué de esta división de responsabilidades.
-  // ------------------------------------------------------------------------
-
   server.on("/api/ble/status", HTTP_GET, []() {
     String json = "{\"configured\":";
 
@@ -2963,9 +2368,6 @@ void setupWebServer() {
       return;
     }
 
-    // server.arg("plain") trae el cuerpo crudo del POST cuando no es
-    // application/x-www-form-urlencoded -- acá siempre es texto
-    // hexadecimal (ver hexToBytes), nunca binario.
     const String hexBody = server.arg("plain");
     uint8_t* buffer = new uint8_t[BLE_SCREEN_MAX_WINDOW_BYTES];
     size_t decodedLength = 0;
@@ -2987,7 +2389,6 @@ void setupWebServer() {
 #endif
   });
 
-
   server.onNotFound([]() {
     server.send(
       404,
@@ -2996,14 +2397,16 @@ void setupWebServer() {
     );
   });
 
-  // IMPORTANTE: las credenciales van como argumentos de begin(), no en un
-  // setAuth() previo -- ElegantOTAClass::begin(server, username="",
-  // password="") llama a setAuth(username, password) internamente, así que
-  // un setAuth() hecho ANTES de begin() queda pisado por los valores por
-  // default (vacíos) de begin() y el panel /update queda sin protección
-  // real, aunque el código "parezca" configurarla. Confirmado en vivo: con
-  // el bug, http://IP/update respondía 200 sin ninguna credencial.
+  NopalCluster::registerHttpRoutes();
+  NopalPower::registerHttpRoutes();
+
   ElegantOTA.begin(&server, NOPAL_OTA_USERNAME, NOPAL_OTA_PASSWORD);
+
+  ElegantOTA.onEnd([](bool success) {
+    if (success) {
+      NopalCluster::prepareForReboot();
+    }
+  });
 
   server.begin();
   webServerStarted = true;
@@ -3014,9 +2417,11 @@ void setupWebServer() {
   Serial.println(activeIpAddress());
 }
 
-
 void serviceNetwork() {
   maintainWifiConnection();
+
+  NopalCluster::service();
+  NopalPower::service();
 
 #if defined(ESP32)
   maintainBleScreen();
@@ -3041,11 +2446,6 @@ void serviceNetwork() {
 
 #endif
 }
-
-
-// ============================================================================
-// IDENTIFICACIÓN PARA NOPAL
-// ============================================================================
 
 void sendIdentification() {
   Serial.print("NOPAL,role=accessory,chip=");
@@ -3075,8 +2475,7 @@ void sendIdentification() {
   );
 
 #if WS2812_ENABLE
-  // Tiras 2 y 3 -- mismo criterio que los campos extra del buzzer más
-  // abajo: campos aditivos, un backend viejo que no los conoce los ignora.
+
   Serial.print(",ws2812_2=");
   Serial.print(ws2812StripEnabled(1) ? 1 : 0);
   Serial.print(",ws2812_2_count=");
@@ -3088,9 +2487,6 @@ void sendIdentification() {
   Serial.print(ws2812StripEnabled(2) ? ws2812StripCount(2) : 0);
 #endif
 
-  // Campos del buzzer -- no existían en nopal_accessory.ino, los agrega
-  // Nopal_FF. Mismo criterio que el resto de campos "extra" de esta
-  // línea: un backend viejo que no los conoce simplemente los ignora.
   Serial.print(",buzzer=");
   Serial.print(BUZZER_ENABLE ? 1 : 0);
 
@@ -3100,9 +2496,6 @@ void sendIdentification() {
   Serial.print(",buzzer_pattern=");
   Serial.print(buzzerPatternName(buzzerPattern));
 
-  // Campos opcionales agregados en 1.3: un backend viejo simplemente no los
-  // conoce y los ignora, mismo criterio que el resto de campos "extra" de
-  // esta línea.
   Serial.print(",wifi=1");
 
   Serial.print(",wifi_connected=");
@@ -3129,17 +2522,12 @@ void sendIdentification() {
   Serial.print(",ble_screen=0,ble_screen_connected=0");
 #endif
 
-  // Telemetría real disponible en ambas plataformas sin sensores extra
-  // (no hay forma de medir voltaje/corriente/temperatura en este firmware
-  // genérico sin hardware adicional, así que no se reporta). Presente
-  // desde la 1.2.
   Serial.print(",uptime_ms=");
   Serial.print(millis());
 
   Serial.print(",free_heap=");
   Serial.println(ESP.getFreeHeap());
 }
-
 
 void sendNetworkIdentification() {
   Serial.print("NET,connected=");
@@ -3181,18 +2569,6 @@ void sendNetworkIdentification() {
   Serial.println("/update");
 }
 
-
-// ============================================================================
-// PROCESAMIENTO DE RELÉS
-// ============================================================================
-
-// Devuelve la respuesta en `response` en vez de imprimirla directo (así la
-// puede reusar tanto handleCommand(), que la manda por Serial, como los
-// endpoints HTTP nuevos, que la mandan como cuerpo de la respuesta) -- el
-// `bool` de retorno conserva su significado original: "reconocí esto como
-// un comando de relé" (true incluso en error de formato/índice/acción),
-// false si ni siquiera tiene forma de comando de relé (deja que
-// handleCommand() siga probando otros handlers).
 bool handleRelayCommand(const String& command, String& response) {
 
   if (
@@ -3201,11 +2577,6 @@ bool handleRelayCommand(const String& command, String& response) {
   ) {
     return false;
   }
-
-  // ------------------------------------------------------------------------
-  // Consulta:
-  // R1?
-  // ------------------------------------------------------------------------
 
   if (command.endsWith("?")) {
 
@@ -3230,13 +2601,6 @@ bool handleRelayCommand(const String& command, String& response) {
 
     return true;
   }
-
-
-  // ------------------------------------------------------------------------
-  // Acción:
-  // R1:ON
-  // R1:OFF
-  // ------------------------------------------------------------------------
 
   const int colonPosition =
     command.indexOf(':');
@@ -3282,16 +2646,6 @@ bool handleRelayCommand(const String& command, String& response) {
   return true;
 }
 
-
-// ============================================================================
-// PROCESAMIENTO DE COMANDOS
-// ============================================================================
-
-// Mismo criterio que handleRelayCommand(): devuelve la respuesta en vez de
-// imprimirla, para reusarse desde Serial (handleCommand) y desde los
-// endpoints HTTP nuevos. `setColor` es setPwmLedColor o setWs2812Color
-// (misma firma en ambas), `prefixLength` es cuánto saltar del comando
-// antes de los 3 números ("LED:" = 4, "WS:" = 3).
 bool parseAndSetColor(
   const String& command,
   uint8_t prefixLength,
@@ -3325,7 +2679,6 @@ bool parseAndSetColor(
   return true;
 }
 
-
 bool parseAndSetSegment(const String& command, uint8_t prefixLength, String& response, uint8_t stripIndex) {
   int start;
   int count;
@@ -3356,16 +2709,6 @@ bool parseAndSetSegment(const String& command, uint8_t prefixLength, String& res
   );
 }
 
-
-// ============================================================================
-// COMANDOS DEL BUZZER
-// ============================================================================
-//
-// Mismo criterio que handleRelayCommand(): devuelve la respuesta por
-// referencia en vez de imprimirla directo, para reusarse tanto desde
-// handleCommand() (Serial) como desde /api/buzzer (HTTP) sin duplicar la
-// lógica de los patrones. Lógica portada de
-// handleBuzzerCommand()/BUZZER? en NOPAL_ESP12E_BUZZER.ino.
 bool handleBuzzerCommand(const String& command, String& response) {
 
   if (command == "BUZZER?") {
@@ -3393,7 +2736,6 @@ bool handleBuzzerCommand(const String& command, String& response) {
   return true;
 }
 
-
 void handleCommand(String line) {
 
   line.trim();
@@ -3406,11 +2748,6 @@ void handleCommand(String line) {
     line.substring(6);
 
   command.trim();
-
-
-  // ------------------------------------------------------------------------
-  // Identificación
-  // ------------------------------------------------------------------------
 
   if (command == "ID?") {
     sendIdentification();
@@ -3443,11 +2780,6 @@ void handleCommand(String line) {
   }
 #endif
 
-
-  // ------------------------------------------------------------------------
-  // Relés
-  // ------------------------------------------------------------------------
-
   {
     String response;
 
@@ -3457,11 +2789,6 @@ void handleCommand(String line) {
     }
   }
 
-
-  // ------------------------------------------------------------------------
-  // Buzzer
-  // ------------------------------------------------------------------------
-
   {
     String response;
 
@@ -3470,11 +2797,6 @@ void handleCommand(String line) {
       return;
     }
   }
-
-
-  // ------------------------------------------------------------------------
-  // RGB PWM
-  // ------------------------------------------------------------------------
 
 #if PWM_LED_ENABLE
 
@@ -3486,11 +2808,6 @@ void handleCommand(String line) {
   }
 
 #endif
-
-
-  // ------------------------------------------------------------------------
-  // WS2812
-  // ------------------------------------------------------------------------
 
 #if WS2812_ENABLE
 
@@ -3541,38 +2858,26 @@ void handleCommand(String line) {
   Serial.println("ERR:UNKNOWN_COMMAND");
 }
 
-
-// ============================================================================
-// SETUP
-// ============================================================================
-
 void setup() {
   Serial.begin(115200);
 
   inputLine.reserve(128);
 
-  // Configuración segura de relés.
   for (uint8_t index = 0; index < RELAY_COUNT; index++) {
     pinMode(RELAY_PINS[index], OUTPUT);
     setRelay(index, false);
   }
 
-  // Buzzer apagado desde el arranque, antes de que Wi-Fi/HTTP puedan
-  // recibir ningún comando -- mismo criterio que los relés de arriba.
   initializeBuzzerSafely();
 
 #if STATUS_LED_ENABLE
-  // Encendido apenas la placa está mínimamente viva -- antes de setupWifi()
-  // a propósito, para que el LED ya esté prendido durante el margen de
-  // conexión (varios segundos) en vez de parecer una placa muerta hasta
-  // que termine.
+
   pinMode(STATUS_LED_PIN, OUTPUT);
   setStatusLed(true);
 #endif
 
   setupPwmLed();
 
-  // Apagar RGB al iniciar.
   setPwmLedColor(0, 0, 0);
 
 #if WS2812_ENABLE
@@ -3581,10 +2886,6 @@ void setup() {
   strip.clear();
   strip.show();
 
-  // Tiras 2 y 3: mismo begin()/clear()/show(), solo si están habilitadas
-  // (ver WS2812_2_ENABLE/WS2812_3_ENABLE en "CONFIGURACIÓN DE PINES") --
-  // si no, sus objetos Adafruit_NeoPixel existen pero nunca se inicializan
-  // ni se usan.
   if (ws2812StripEnabled(1)) {
     strip2.begin();
     strip2.clear();
@@ -3596,30 +2897,21 @@ void setup() {
     strip3.show();
   }
 
-  // Animación breve de "la placa está viva" antes de meterse a conectar
-  // Wi-Fi -- ver el comentario de playStartupAnimation() más arriba (por
-  // qué no es un efecto en curso y no demora el arranque real). Corre
-  // solo sobre la tira 0 (la principal) para no alargar el arranque.
   playStartupAnimation();
 
 #endif
 
   setupWifi();
   setupWebServer();
+  NopalCluster::setup();
+  NopalPower::setup();
 
 #if defined(ESP32)
-  // Solo se inicializa el stack BLE si de verdad hay una pantalla
-  // configurada -- no tiene sentido gastar RAM/radio en una placa que no
-  // usa esta función (mismo criterio que WS2812_ENABLE/BUZZER_ENABLE).
+
   if (bleScreenConfigured()) {
     NimBLEDevice::init("");
     NimBLEDevice::setMTU(247);
 
-    // Primer intento ya durante el arranque, en vez de esperar los
-    // BLE_SCREEN_RECONNECT_INTERVAL_MS (20s) del ciclo normal de
-    // maintainBleScreen() -- así el resultado (éxito o el diagnóstico de
-    // connectBleScreen()) sale pegado a NOPAL:READY en el log de
-    // arranque, sin tener que cronometrar cuándo mirar el monitor Serial.
     bleScreenLastAttemptMs = millis();
     connectBleScreen();
   }
@@ -3630,18 +2922,10 @@ void setup() {
   Serial.println("NOPAL:READY");
 }
 
-
-// ============================================================================
-// LOOP
-// ============================================================================
-
 void loop() {
 
   serviceNetwork();
 
-  // El buzzer se atiende siempre, sin importar el estado de la red --
-  // igual que en NOPAL_ESP12E_BUZZER.ino, así un patrón en curso (ej.
-  // ALARM repitiendo) no se corta ni se retrasa por Wi-Fi/OTA/Serial.
   serviceBuzzer();
 
   while (Serial.available() > 0) {
@@ -3661,7 +2945,6 @@ void loop() {
 
     } else if (receivedCharacter != '\r') {
 
-      // Evita que una entrada defectuosa consuma toda la memoria.
       if (inputLine.length() < 127) {
         inputLine += receivedCharacter;
       } else {
@@ -3673,7 +2956,6 @@ void loop() {
 
 #if defined(ESP8266)
 
-  // Permite que el ESP8266 atienda sus tareas internas.
   yield();
 
 #endif

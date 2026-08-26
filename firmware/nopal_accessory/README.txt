@@ -4,11 +4,33 @@ NOPAL — Firmware de accesorios (relés / RGB / WS2812 + Wi-Fi + ElegantOTA)
 ARCHIVOS
 --------
 - nopal_accessory.ino     -> sketch principal, el que usa el backend de NOPAL.
+- nopal_cluster.h         -> módulo de clúster (descubrimiento UDP, elección
+                              de líder, heartbeat y failover). Apagado por
+                              defecto: se prende con NOPAL_CLUSTER_ENABLE=1
+                              en secrets.h.
+- nopal_power.h           -> monitor de batería MAX17048 por I2C, sirve
+                              GET /api/power. Apagado por defecto: se prende
+                              con NOPAL_POWER_MONITOR_ENABLE=1 en secrets.h.
 - secrets.h.example       -> plantilla de credenciales, sí se sube al repo.
 - secrets.h               -> tus credenciales reales (NO se sube, ver abajo).
-- builds/                 -> binarios .bin ya compilados, listos para
-                              flashear desde el panel de NOPAL (ver sección
-                              "FLASHEO DESDE NOPAL" más abajo).
+
+Los .bin ya compilados NO van acá: se suben desde el panel de NOPAL y el
+servidor los guarda en data/accessories/firmware_builds/ (ver sección
+"FLASHEO DESDE NOPAL" más abajo).
+
+OTRAS CARPETAS DE firmware/
+----------------------------
+- ../nopal_tcall_sim800l/ -> placa AM-036 / T-Call SIM800L. Sketch aparte
+                              porque su mapa de pines real es distinto (ver
+                              su utilities.h), pero comparte nopal_cluster.h.
+- ../legacy/              -> sketches de una sola placa que quedaron
+                              superados por este. Se conservan como
+                              referencia; no se flashea nada de ahí.
+
+OJO CON nopal_cluster.h: existe una copia en cada carpeta de sketch y las
+dos deben quedar IDÉNTICAS. No es un include compartido -- el IDE de
+Arduino compila cada carpeta por su cuenta y solo ve los archivos que están
+dentro de ella. Si tocás una, copiá el archivo a la otra.
 
 PLATAFORMAS SOPORTADAS
 -----------------------
@@ -86,7 +108,8 @@ el servidor). Lo que sí puede hacer es escribir un binario YA COMPILADO:
    FUSIONADO (bootloader + partición + app en un solo archivo), pensado
    para flashearse completo en el offset 0x0.
 2. Sube ese .bin desde el panel de accesorios de NOPAL (se guarda en
-   builds/, junto a este README).
+   data/accessories/firmware_builds/, dentro del checkout de NOPAL core,
+   junto al resto del estado de esta instalación).
 3. Desde ahí puedes flashear:
    - Por USB (esptool, offset 0x0) — la placa tiene que estar conectada
      al mismo equipo donde corre NOPAL.

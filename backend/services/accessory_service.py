@@ -15,6 +15,9 @@ logger = logging.getLogger(__name__)
 
 REGISTRY_PATH = "accessory_registry.json"
 HTTP_TIMEOUT = 5
+# Segunda llamada por refresco (ver _probe_wifi_battery): más corta que
+# HTTP_TIMEOUT para no duplicar la espera peor caso de cada placa.
+BATTERY_HTTP_TIMEOUT = 2
 NOPAL_BOARD_BAUD = 115200
 
 
@@ -272,6 +275,79 @@ def _arduino_http_request(
         return None
 
 
+def _probe_wifi_battery(ip: str, username: str, password: str) -> Dict[str, Any]:
+    """Lee el medidor de batería (MAX17048 por I2C) de una placa NOPAL por
+    WiFi. Vive en GET /api/power, no en /api/status, así que hace falta una
+    segunda llamada: el firmware solo monta esa ruta cuando el chip
+    responde en el bus, y devuelve 404 {"error":"not_found"} en las placas
+    que no lo traen cableado. Diccionario vacío en ese caso (y ante
+    cualquier fallo de red) -- una placa sin batería no debe mostrar una
+    ficha de batería inventada. Timeout corto aparte del HTTP_TIMEOUT
+    general porque esto corre en cada refresco de telemetría, encima del
+    /api/status que ya se pagó."""
+    try:
+        response = requests.get(
+            f"http://{ip}/api/power",
+            auth=(username, password) if username or password else None,
+            timeout=BATTERY_HTTP_TIMEOUT,
+        )
+        if response.status_code == 404:
+            return {}
+        response.raise_for_status()
+        data = response.json()
+    except (requests.exceptions.RequestException, ValueError) as e:
+        logger.debug(f"[{ip}] Sin medidor de bateria: {e}")
+        return {}
+
+    if not isinstance(data, dict) or data.get("error"):
+        return {}
+    # "alerts" y "chip" son objetos anidados en la respuesta del firmware,
+    # pero acá no se puede dar por hecho: si la placa sirviera otra cosa en
+    # /api/power (un firmware distinto, un proxy, una placa mal
+    # identificada), un .get() sobre un string tiraría AttributeError y
+    # reventaría probe_wifi_board entero -- la placa se vería como caída
+    # por un campo de diagnóstico. Se valida el tipo antes de tocarlos.
+    alerts = data.get("alerts")
+    if not isinstance(alerts, dict):
+        alerts = {}
+    chip = data.get("chip")
+    if not isinstance(chip, dict):
+        chip = {}
+
+    return {
+        # "battery_valid" en False (chip presente pero lectura todavía no
+        # confiable) SÍ se conserva -- no es None -- para que el frontend
+        # sepa que esta placa tiene medidor aunque el dato de este momento
+        # no sirva, igual que dht_enabled.
+        "battery_valid": data.get("valid"),
+        "battery_voltage_v": data.get("voltage_v"),
+        "battery_soc_pct": data.get("soc_pct"),
+        # Ritmo con signo (%/hora): positivo carga, negativo descarga. Es
+        # lo que distingue "hay luz" de "estamos con la batería", sin
+        # cablear un sensor de corriente aparte.
+        "battery_crate_pct_hr": data.get("crate_pct_hr"),
+        "battery_charging": data.get("charging"),
+        # El firmware omite este campo cuando el ritmo es demasiado chico
+        # para estimar algo con sentido -- acá queda en None y el filtro
+        # de optional lo descarta, en vez de mostrar un tiempo inventado.
+        "battery_minutes_remaining": data.get("minutes_remaining"),
+        # En hibernación el chip mide cada ~45 s en vez de cada 250 ms, así
+        # que el dato puede estar viejo aunque la respuesta sea de ahora.
+        "battery_hibernating": data.get("hibernating"),
+        "battery_alert_soc_pct": data.get("alert_soc_pct"),
+        # Banderas del registro STATUS del chip. "reset" es la que importa
+        # en un no-break: el firmware la limpia al arrancar, así que verla
+        # prendida después significa que el medidor se reinició solo.
+        "battery_alert_soc_low": alerts.get("soc_low"),
+        "battery_alert_voltage_low": alerts.get("voltage_low"),
+        "battery_alert_reset": alerts.get("reset"),
+        # Versión/ID de silicio: confirman que el chip es un MAX17048 y no
+        # un MAX17043, que usa otro LSB de voltaje y daría lecturas mal
+        # escaladas con el mismo código.
+        "battery_chip_version": chip.get("version"),
+    }
+
+
 def probe_wifi_board(ip: str, username: str, password: str) -> Optional[Dict[str, Any]]:
     """Prueba una placa NOPAL por WiFi antes de darla de alta: pega a su
     GET /api/status (el mismo endpoint que ya usa el flasheo por OTA) y
@@ -339,6 +415,7 @@ def probe_wifi_board(ip: str, username: str, password: str) -> Optional[Dict[str
         "dht_temp_c": dht.get("t_c"),
         "dht_humidity_pct": dht.get("h_pct"),
         "dht_pin": dht.get("pin"),
+        **_probe_wifi_battery(ip, username, password),
     }
     result.update({key: value for key, value in optional.items() if value is not None})
     return result

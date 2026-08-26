@@ -225,6 +225,91 @@ class TestProbeWifiBoard:
 
         assert "dht_enabled" not in board
 
+    def test_battery_is_included_when_board_serves_api_power(self, monkeypatch):
+        # El medidor de batería NO viene en /api/status: el firmware lo
+        # sirve aparte en /api/power, así que probe_wifi_board hace una
+        # segunda llamada. Este test la distingue por URL.
+        status_json = {
+            "role": "accessory",
+            "firmware": "4.5.0-ff",
+            "wifi": {"connected": True},
+            "io": {"relays": 4},
+        }
+        power_json = {
+            "valid": True,
+            "voltage_v": 4.14,
+            "soc_pct": 87.5,
+            "crate_pct_hr": -12.4,
+            "charging": False,
+            "minutes_remaining": 423,
+            "hibernating": False,
+            "alert_soc_pct": 15,
+            "alerts": {"reset": False, "voltage_low": False, "soc_low": False},
+            "chip": {"version": "0x0012", "id": "0x004A"},
+        }
+
+        def fake_get(url, auth=None, timeout=None):
+            if url.endswith("/api/power"):
+                return _FakeResponse(json_data=power_json)
+            return _FakeResponse(json_data=status_json)
+
+        monkeypatch.setattr(accessory_service.requests, "get", fake_get)
+        board = accessory_service.probe_wifi_board("192.168.1.50", "nopal", "secreto")
+
+        assert board["battery_valid"] is True
+        assert board["battery_voltage_v"] == 4.14
+        assert board["battery_soc_pct"] == 87.5
+        assert board["battery_crate_pct_hr"] == -12.4
+        # charging False se conserva: es un dato real (está descargando),
+        # no un campo ausente.
+        assert board["battery_charging"] is False
+        assert board["battery_minutes_remaining"] == 423
+        assert board["battery_chip_version"] == "0x0012"
+
+    def test_board_without_battery_gauge_omits_every_battery_field(self, monkeypatch):
+        # Una placa sin MAX17048 no monta la ruta: el firmware contesta 404.
+        # No debe aparecer ni una ficha de batería vacía.
+        status_json = {
+            "role": "accessory",
+            "firmware": "4.5.0-ff",
+            "wifi": {"connected": True},
+            "io": {"relays": 4},
+        }
+
+        def fake_get(url, auth=None, timeout=None):
+            if url.endswith("/api/power"):
+                return _FakeResponse(json_data={"error": "not_found"}, status_code=404)
+            return _FakeResponse(json_data=status_json)
+
+        monkeypatch.setattr(accessory_service.requests, "get", fake_get)
+        board = accessory_service.probe_wifi_board("192.168.1.50", "nopal", "secreto")
+
+        assert not [key for key in board if key.startswith("battery_")]
+
+    def test_minutes_remaining_absent_when_firmware_omits_it(self, monkeypatch):
+        # El firmware omite minutes_remaining cuando el ritmo de carga es
+        # demasiado chico para estimar algo con sentido. Ese hueco se
+        # respeta en vez de rellenarlo con un 0.
+        status_json = {
+            "role": "accessory",
+            "firmware": "4.5.0-ff",
+            "wifi": {"connected": True},
+            "io": {"relays": 4},
+        }
+        power_json = {"valid": True, "voltage_v": 4.02, "soc_pct": 61.0,
+                      "crate_pct_hr": 0.1, "charging": True, "hibernating": False}
+
+        def fake_get(url, auth=None, timeout=None):
+            if url.endswith("/api/power"):
+                return _FakeResponse(json_data=power_json)
+            return _FakeResponse(json_data=status_json)
+
+        monkeypatch.setattr(accessory_service.requests, "get", fake_get)
+        board = accessory_service.probe_wifi_board("192.168.1.50", "nopal", "secreto")
+
+        assert board["battery_valid"] is True
+        assert "battery_minutes_remaining" not in board
+
     def test_non_nopal_board_returns_none(self, monkeypatch):
         monkeypatch.setattr(
             accessory_service.requests, "get",

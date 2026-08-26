@@ -199,7 +199,7 @@ const I18N = {
         boardConnectionLabel: 'Conexión de placa', onlineState: 'En línea', unconfirmedState: 'Sin confirmar',
         notConfiguredFem: 'No configurada', latencyWord: 'Latencia', nopalHandshake: 'Handshake NOPAL',
         heapAvailable: 'Heap disponible', noIpWord: 'Sin IP', uptimeWord: 'Uptime', sinceLastRestart: 'Desde el último reinicio',
-        inputAnalog: 'Entrada analógica', wifiSignal: 'Señal WiFi', localNetwork: 'Red local', dhtSensorLabel: 'Sensor DHT11',
+        inputAnalog: 'Entrada analógica', wifiSignal: 'Señal WiFi', localNetwork: 'Red local', dhtSensorLabel: 'Sensor DHT11', batteryLabel: 'Batería', batteryCharging: 'Cargando', batteryDischarging: 'Descargando', batteryUntilFull: '{time} para llenarse', batteryUntilEmpty: '{time} restantes', batteryHibernating: 'medidor en reposo', batteryResetAlert: 'El medidor se reinició solo', batteryVoltageNote: 'Voltaje medido',
         boardTelemetry: 'Telemetría de la placa', lastRealHandshakeData: 'Datos del último handshake real',
         subScenes2: 'Escenas', createSceneHint: 'Crea una escena para encender relés y ajustar luces con una sola acción.',
         newSceneWord: 'Nueva escena', actionCount: '{count} acción(es)',
@@ -282,7 +282,7 @@ const I18N = {
         relayNamePlaceholder: 'Ej. Ventilador extractor', relayNumberLabel: 'Número de relé',
         registerRelayBtn: 'Registrar relé', relayRegisteredToast: 'Relé registrado.', workshopWord: 'Taller',
         turnOnOption: 'Encender', turnOffOption: 'Apagar', setColorOption: 'Fijar color', removeActionTitle: 'Quitar acción',
-        workshopMacroEyebrow: 'MACRO DEL TALLER', sceneEditorHint: 'Aplica varias acciones sobre tus relés y luces con un solo botón.',
+        workshopMacroEyebrow: 'MACRO DEL TALLER', sceneEditorHint: 'Aplica varias acciones sobre tus relés y luces con un solo botón.', aiSceneHintTitle: 'Deja que NOPAL Intelligence te la arme', aiSceneHintBody: 'Con la IA activada puedes pedir escenas en palabras ("ciclo de ventilación") y proponerlas a partir de tus accesorios.', aiSceneHintCta: 'Activar NOPAL Intelligence',
         addActionBtn: 'Agregar acción', saveChangesBtn: 'Guardar cambios', createSceneBtn: 'Crear escena',
         confirmDeleteScene: 'Vas a eliminar la escena "{name}". Esta acción no se puede deshacer.', deleteSceneTitle: 'Eliminar escena',
         noBoardsAddedYet: 'Todavía no agregaste ninguna placa.',
@@ -489,7 +489,7 @@ const I18N = {
         boardConnectionLabel: 'Board connection', onlineState: 'Online', unconfirmedState: 'Unconfirmed',
         notConfiguredFem: 'Not configured', latencyWord: 'Latency', nopalHandshake: 'NOPAL handshake',
         heapAvailable: 'Available heap', noIpWord: 'No IP', uptimeWord: 'Uptime', sinceLastRestart: 'Since last restart',
-        inputAnalog: 'Analog input', wifiSignal: 'WiFi signal', localNetwork: 'Local network', dhtSensorLabel: 'DHT11 sensor',
+        inputAnalog: 'Analog input', wifiSignal: 'WiFi signal', localNetwork: 'Local network', dhtSensorLabel: 'DHT11 sensor', batteryLabel: 'Battery', batteryCharging: 'Charging', batteryDischarging: 'Discharging', batteryUntilFull: '{time} to full', batteryUntilEmpty: '{time} remaining', batteryHibernating: 'gauge asleep', batteryResetAlert: 'The gauge reset itself', batteryVoltageNote: 'Measured voltage',
         boardTelemetry: 'Board telemetry', lastRealHandshakeData: 'Data from the last real handshake',
         subScenes2: 'Scenes', createSceneHint: 'Create a scene to turn on relays and adjust lights with a single action.',
         newSceneWord: 'New scene', actionCount: '{count} action(s)',
@@ -572,7 +572,7 @@ const I18N = {
         relayNamePlaceholder: 'E.g. Extractor fan', relayNumberLabel: 'Relay number',
         registerRelayBtn: 'Register relay', relayRegisteredToast: 'Relay registered.', workshopWord: 'Workshop',
         turnOnOption: 'Turn on', turnOffOption: 'Turn off', setColorOption: 'Set color', removeActionTitle: 'Remove action',
-        workshopMacroEyebrow: 'WORKSHOP MACRO', sceneEditorHint: 'Apply several actions to your relays and lights with a single button.',
+        workshopMacroEyebrow: 'WORKSHOP MACRO', sceneEditorHint: 'Apply several actions to your relays and lights with a single button.', aiSceneHintTitle: 'Let NOPAL Intelligence build it', aiSceneHintBody: 'With AI enabled you can ask for scenes in plain words ("ventilation cycle") and have them proposed from your accessories.', aiSceneHintCta: 'Enable NOPAL Intelligence',
         addActionBtn: 'Add action', saveChangesBtn: 'Save changes', createSceneBtn: 'Create scene',
         confirmDeleteScene: 'You\'re about to delete the scene "{name}". This action can\'t be undone.', deleteSceneTitle: 'Delete scene',
         noBoardsAddedYet: 'You haven\'t added any boards yet.',
@@ -750,7 +750,7 @@ const I18N = {
         boardConnectionLabel: 'Platinenverbindung', onlineState: 'Online', unconfirmedState: 'Unbestätigt',
         notConfiguredFem: 'Nicht konfiguriert', latencyWord: 'Latenz', nopalHandshake: 'NOPAL-Handshake',
         heapAvailable: 'Verfügbarer Heap', noIpWord: 'Keine IP', uptimeWord: 'Laufzeit', sinceLastRestart: 'Seit dem letzten Neustart',
-        inputAnalog: 'Analogeingang', wifiSignal: 'WLAN-Signal', localNetwork: 'Lokales Netzwerk', dhtSensorLabel: 'DHT11-Sensor',
+        inputAnalog: 'Analogeingang', wifiSignal: 'WLAN-Signal', localNetwork: 'Lokales Netzwerk', dhtSensorLabel: 'DHT11-Sensor', batteryLabel: 'Batterie', batteryCharging: 'Wird geladen', batteryDischarging: 'Wird entladen', batteryUntilFull: '{time} bis voll', batteryUntilEmpty: 'noch {time}', batteryHibernating: 'Messgerät im Ruhezustand', batteryResetAlert: 'Das Messgerät hat sich zurückgesetzt', batteryVoltageNote: 'Gemessene Spannung',
         boardTelemetry: 'Platinen-Telemetrie', lastRealHandshakeData: 'Daten des letzten echten Handshakes',
         subScenes2: 'Szenen', createSceneHint: 'Erstelle eine Szene, um Relais einzuschalten und Lichter mit einer einzigen Aktion anzupassen.',
         newSceneWord: 'Neue Szene', actionCount: '{count} Aktion(en)',
@@ -833,7 +833,7 @@ const I18N = {
         relayNamePlaceholder: 'z. B. Absaugventilator', relayNumberLabel: 'Relaisnummer',
         registerRelayBtn: 'Relais registrieren', relayRegisteredToast: 'Relais registriert.', workshopWord: 'Werkstatt',
         turnOnOption: 'Einschalten', turnOffOption: 'Ausschalten', setColorOption: 'Farbe festlegen', removeActionTitle: 'Aktion entfernen',
-        workshopMacroEyebrow: 'WERKSTATT-MAKRO', sceneEditorHint: 'Wende mehrere Aktionen auf deine Relais und Lichter mit einem einzigen Knopf an.',
+        workshopMacroEyebrow: 'WERKSTATT-MAKRO', sceneEditorHint: 'Wende mehrere Aktionen auf deine Relais und Lichter mit einem einzigen Knopf an.', aiSceneHintTitle: 'Lass NOPAL Intelligence sie bauen', aiSceneHintBody: 'Mit aktivierter KI kannst du Szenen in Worten anfordern ("Lüftungszyklus") und sie aus deinem Zubehör vorschlagen lassen.', aiSceneHintCta: 'NOPAL Intelligence aktivieren',
         addActionBtn: 'Aktion hinzufügen', saveChangesBtn: 'Änderungen speichern', createSceneBtn: 'Szene erstellen',
         confirmDeleteScene: 'Du bist dabei, die Szene "{name}" zu löschen. Diese Aktion kann nicht rückgängig gemacht werden.', deleteSceneTitle: 'Szene löschen',
         noBoardsAddedYet: 'Du hast noch keine Platinen hinzugefügt.',
@@ -1011,7 +1011,7 @@ const I18N = {
         boardConnectionLabel: 'Connexion de la carte', onlineState: 'En ligne', unconfirmedState: 'Non confirmée',
         notConfiguredFem: 'Non configurée', latencyWord: 'Latence', nopalHandshake: 'Handshake NOPAL',
         heapAvailable: 'Heap disponible', noIpWord: 'Pas d\'IP', uptimeWord: 'Disponibilité', sinceLastRestart: 'Depuis le dernier redémarrage',
-        inputAnalog: 'Entrée analogique', wifiSignal: 'Signal WiFi', localNetwork: 'Réseau local', dhtSensorLabel: 'Capteur DHT11',
+        inputAnalog: 'Entrée analogique', wifiSignal: 'Signal WiFi', localNetwork: 'Réseau local', dhtSensorLabel: 'Capteur DHT11', batteryLabel: 'Batterie', batteryCharging: 'En charge', batteryDischarging: 'En décharge', batteryUntilFull: '{time} avant charge complète', batteryUntilEmpty: '{time} restantes', batteryHibernating: 'jauge en veille', batteryResetAlert: "La jauge s'est réinitialisée", batteryVoltageNote: 'Tension mesurée',
         boardTelemetry: 'Télémétrie de la carte', lastRealHandshakeData: 'Données du dernier handshake réel',
         subScenes2: 'Scènes', createSceneHint: 'Créez une scène pour allumer des relais et ajuster les lumières en une seule action.',
         newSceneWord: 'Nouvelle scène', actionCount: '{count} action(s)',
@@ -1094,7 +1094,7 @@ const I18N = {
         relayNamePlaceholder: 'Ex. Ventilateur extracteur', relayNumberLabel: 'Numéro de relais',
         registerRelayBtn: 'Enregistrer le relais', relayRegisteredToast: 'Relais enregistré.', workshopWord: 'Atelier',
         turnOnOption: 'Allumer', turnOffOption: 'Éteindre', setColorOption: 'Définir la couleur', removeActionTitle: 'Retirer l\'action',
-        workshopMacroEyebrow: 'MACRO DE L\'ATELIER', sceneEditorHint: 'Appliquez plusieurs actions sur vos relais et lumières avec un seul bouton.',
+        workshopMacroEyebrow: 'MACRO DE L\'ATELIER', sceneEditorHint: 'Appliquez plusieurs actions sur vos relais et lumières avec un seul bouton.', aiSceneHintTitle: 'Laissez NOPAL Intelligence la créer', aiSceneHintBody: 'Avec l\'IA activée, demandez des scènes en mots ("cycle de ventilation") et laissez-les être proposées depuis vos accessoires.', aiSceneHintCta: 'Activer NOPAL Intelligence',
         addActionBtn: 'Ajouter une action', saveChangesBtn: 'Enregistrer les modifications', createSceneBtn: 'Créer la scène',
         confirmDeleteScene: 'Vous allez supprimer la scène "{name}". Cette action est irréversible.', deleteSceneTitle: 'Supprimer la scène',
         noBoardsAddedYet: 'Vous n\'avez encore ajouté aucune carte.',
@@ -1272,7 +1272,7 @@ const I18N = {
         boardConnectionLabel: 'Conexão da placa', onlineState: 'Online', unconfirmedState: 'Não confirmada',
         notConfiguredFem: 'Não configurada', latencyWord: 'Latência', nopalHandshake: 'Handshake NOPAL',
         heapAvailable: 'Heap disponível', noIpWord: 'Sem IP', uptimeWord: 'Uptime', sinceLastRestart: 'Desde a última reinicialização',
-        inputAnalog: 'Entrada analógica', wifiSignal: 'Sinal WiFi', localNetwork: 'Rede local', dhtSensorLabel: 'Sensor DHT11',
+        inputAnalog: 'Entrada analógica', wifiSignal: 'Sinal WiFi', localNetwork: 'Rede local', dhtSensorLabel: 'Sensor DHT11', batteryLabel: 'Bateria', batteryCharging: 'Carregando', batteryDischarging: 'Descarregando', batteryUntilFull: '{time} até encher', batteryUntilEmpty: '{time} restantes', batteryHibernating: 'medidor em repouso', batteryResetAlert: 'O medidor se reiniciou sozinho', batteryVoltageNote: 'Tensão medida',
         boardTelemetry: 'Telemetria da placa', lastRealHandshakeData: 'Dados do último handshake real',
         subScenes2: 'Cenas', createSceneHint: 'Crie uma cena para ligar relés e ajustar luzes com uma única ação.',
         newSceneWord: 'Nova cena', actionCount: '{count} ação(ões)',
@@ -1355,7 +1355,7 @@ const I18N = {
         relayNamePlaceholder: 'Ex. Ventilador exaustor', relayNumberLabel: 'Número do relé',
         registerRelayBtn: 'Registrar relé', relayRegisteredToast: 'Relé registrado.', workshopWord: 'Oficina',
         turnOnOption: 'Ligar', turnOffOption: 'Desligar', setColorOption: 'Definir cor', removeActionTitle: 'Remover ação',
-        workshopMacroEyebrow: 'MACRO DA OFICINA', sceneEditorHint: 'Aplique várias ações aos seus relés e luzes com um único botão.',
+        workshopMacroEyebrow: 'MACRO DA OFICINA', sceneEditorHint: 'Aplique várias ações aos seus relés e luzes com um único botão.', aiSceneHintTitle: 'Deixe o NOPAL Intelligence montá-la', aiSceneHintBody: 'Com a IA ativada você pode pedir cenas em palavras ("ciclo de ventilação") e tê-las propostas a partir dos seus acessórios.', aiSceneHintCta: 'Ativar o NOPAL Intelligence',
         addActionBtn: 'Adicionar ação', saveChangesBtn: 'Salvar alterações', createSceneBtn: 'Criar cena',
         confirmDeleteScene: 'Você vai excluir a cena "{name}". Esta ação não pode ser desfeita.', deleteSceneTitle: 'Excluir cena',
         noBoardsAddedYet: 'Você ainda não adicionou nenhuma placa.',
@@ -1703,6 +1703,10 @@ const I18N = {
         accessories: [],
         scenes: [],
         activity: [],
+        // Estado de NOPAL Intelligence (core, no es un plugin instalable):
+        // null = todavía no se consultó. Se usa solo para ofrecer la ayuda
+        // de IA donde suma; el plugin funciona igual sin ella.
+        aiAvailable: null,
         boardTelemetry: [],
         ambientSensorBoardId: null,
         workshopLoading: true,
@@ -1787,6 +1791,19 @@ const I18N = {
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.detail || tr('operationCouldNotComplete'));
         return data;
+    }
+
+    // NOPAL Intelligence vive en el core (se activa configurándolo, no se
+    // instala como plugin). Se consulta aparte de loadWorkshopData y en su
+    // propio try: si falla o no está, `aiAvailable` queda en false y la UI
+    // simplemente no ofrece la ayuda de IA -- nunca rompe el plugin.
+    async function refreshAiAvailability() {
+        try {
+            const status = await api('/api/ai/status');
+            state.aiAvailable = Boolean(status.enabled && status.configured);
+        } catch (error) {
+            state.aiAvailable = false;
+        }
     }
 
     async function loadWorkshopData({ quiet = false } = {}) {
@@ -2135,6 +2152,15 @@ const I18N = {
                 <button type="button" class="wsa-lighting-close" data-wsa-scene-close>×</button>
                 <div class="wsa-lighting-heading">${icon(ICON_SCENE, 24)}<div><small>${tr('workshopMacroEyebrow')}</small><h2>${scene ? tr('editSceneTitle') : tr('newSceneWord')}</h2><p>${tr('sceneEditorHint')}</p></div></div>
                 <label><span>${tr('nameWord')}</span><input id="wsa-scene-name" required maxlength="60" value="${esc(scene?.name || '')}" placeholder="Ej. Taller ON"></label>
+
+                ${state.aiAvailable === false ? `<div class="wsa-ai-hint">
+                    <div class="wsa-ai-hint-body">
+                        <strong>${tr('aiSceneHintTitle')}</strong>
+                        <small>${tr('aiSceneHintBody')}</small>
+                    </div>
+                    <a class="wsa-btn wsa-btn-small" href="/ajustes#ia" target="_blank" rel="noopener">${tr('aiSceneHintCta')}</a>
+                </div>` : ''}
+
 
                 <div class="wsa-scene-mode-field">
                     <span class="wsa-scene-mode-label">${tr('sceneModeLabel')}</span>
@@ -3612,6 +3638,60 @@ const I18N = {
         </section>`).join('')}</div>`;
     }
 
+    // Minutos -> "3 h 40 min" / "45 min". El firmware ya omite el dato
+    // cuando el ritmo de carga es demasiado chico para estimar algo, así
+    // que acá nunca se inventa un tiempo: si no vino, no se muestra.
+    function formatMinutes(total) {
+        const mins = Math.max(0, Math.round(Number(total)));
+        const hours = Math.floor(mins / 60);
+        return hours ? `${hours} h ${mins % 60} min` : `${mins} min`;
+    }
+
+    // Valor principal de la ficha de batería: voltaje y, si el medidor lo
+    // entrega, porcentaje de carga. Un SOC en 0 no se muestra como "0%"
+    // porque el MAX17048 reporta justamente eso cuando su algoritmo se
+    // queda atorado -- se leería como "batería vacía", que es otra cosa.
+    function batteryValueText(info) {
+        if (!info.battery_valid) return tr('notReported');
+        const parts = [];
+        if (info.battery_voltage_v != null) parts.push(`${Number(info.battery_voltage_v).toFixed(2)} V`);
+        if (info.battery_soc_pct) parts.push(`${Number(info.battery_soc_pct).toFixed(0)}%`);
+        return parts.length ? parts.join(' · ') : tr('notReported');
+    }
+
+    // Nota al pie: qué está haciendo la carga de la batería.
+    //
+    // A propósito NO dice "en batería" / "se fue la luz": el MAX17048 mide
+    // flujo de carga en la celda, no presencia de corriente de pared, y no
+    // puede distinguir las dos cosas. Con la batería llena, el TP4056 corta
+    // la carga y la celda se relaja de 4.28 V hacia 4.1 V sola -- el
+    // medidor lo reporta como descarga aunque el taller esté enchufado.
+    // Afirmar un corte de luz ahí sería una falsa alarma.
+    function batteryNoteText(info) {
+        if (!info.battery_valid) return tr('batteryVoltageNote');
+        if (info.battery_alert_reset) return tr('batteryResetAlert');
+
+        // Doble llave con el firmware: éste ya omite battery_charging cuando
+        // el ritmo no alcanza para afirmarlo, pero una placa con firmware
+        // anterior lo manda siempre. Sin este filtro, un CRATE en 0 se
+        // mostraba como "En batería" -- o sea "se fue la luz" -- en una
+        // placa que estaba tranquilamente enchufada.
+        const rate = Math.abs(Number(info.battery_crate_pct_hr ?? 0));
+        const rateIsMeaningful = rate >= 0.5;
+
+        const bits = [];
+        if (rateIsMeaningful && info.battery_charging === true) bits.push(tr('batteryCharging'));
+        else if (rateIsMeaningful && info.battery_charging === false) bits.push(tr('batteryDischarging'));
+
+        if (rateIsMeaningful && info.battery_minutes_remaining != null) {
+            const time = formatMinutes(info.battery_minutes_remaining);
+            bits.push(info.battery_charging ? tr('batteryUntilFull', { time }) : tr('batteryUntilEmpty', { time }));
+        }
+        if (info.battery_hibernating) bits.push(tr('batteryHibernating'));
+
+        return bits.length ? bits.join(' · ') : tr('batteryVoltageNote');
+    }
+
     function workshopSensorsPanel(board, info, liveBoard) {
         const metrics = [
             [tr('boardConnectionLabel'), liveBoard?.online || board?.connected ? tr('onlineState') : tr('unconfirmedState'), board?.ip || board?.device || tr('notConfiguredFem')],
@@ -3633,6 +3713,15 @@ const I18N = {
                 info.dht_valid ? `${Number(info.dht_temp_c).toFixed(1)}°C / ${Number(info.dht_humidity_pct).toFixed(1)}%` : tr('notReported'),
                 `GPIO ${info.dht_pin}`,
             ]);
+        }
+        // Igual que el DHT11: solo las placas cuyo firmware monta
+        // GET /api/power (medidor MAX17048 presente en el bus I2C) traen
+        // este bloque -- ver _probe_wifi_battery() en accessory_service.py.
+        // El voltaje es la lectura directa del chip; el porcentaje de carga
+        // se omite si el medidor todavía no lo entrega, en vez de mostrar
+        // un 0% que no significa "batería vacía".
+        if (info.battery_valid != null) {
+            metrics.push([tr('batteryLabel'), batteryValueText(info), batteryNoteText(info)]);
         }
         return `<section class="wsa-card"><div class="wsa-card-title-row"><h2>${icon(ICON_ACTIVITY, 16)}${tr('boardTelemetry')}</h2><small class="wsa-text-muted">${tr('lastRealHandshakeData')}</small></div>
             <div class="wsa-workshop-sensors">${metrics.map(([label, value, note]) => `<div><span>${esc(label)}</span><strong>${esc(value)}</strong><small>${esc(note)}</small></div>`).join('')}</div></section>`;
@@ -4174,7 +4263,7 @@ const I18N = {
             // accesorios pueden enriquecerla en vez de crear/reemplazar
             // placas durante una carrera asíncrona.
             await loadBoardsFromBackend();
-            await Promise.all([checkSetupStatus(), loadWorkshopData()]);
+            await Promise.all([checkSetupStatus(), loadWorkshopData(), refreshAiAvailability()]);
         })();
     }
 

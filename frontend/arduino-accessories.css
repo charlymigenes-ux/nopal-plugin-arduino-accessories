@@ -467,12 +467,46 @@
 .wsa-workshop-sensors span, .wsa-workshop-sensors small { color: var(--text-muted); font-size: .72rem; }
 .wsa-workshop-sensors strong { color: var(--text); font-size: .9rem; }
 .wsa-workshop-scenes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-.wsa-workshop-scenes .wsa-btn { width: 100%; justify-content: flex-start; }
-.wsa-workshop-scenes .wsa-btn span { flex: 1; text-align: left; }
-.wsa-workshop-scenes .wsa-btn small { color: var(--text-muted); }
+/* El botón de escena lleva hasta 4 cosas: ícono, nombre, badge de estado
+   (solo en escenas toggle/cycle) y conteo de acciones. En una sola fila se
+   encimaban al angostarse el contenedor -- se notaba sobre todo en el modal
+   "Todas las escenas", más estrecho que el panel. Se acomodan en un grid de
+   dos renglones: nombre + badge arriba, conteo abajo.
+   El badge también es un <small>, así que las reglas van por clase. */
+.wsa-workshop-scenes .wsa-btn {
+    width: 100%;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 2px 8px;
+    text-align: left;
+    padding: 9px 11px;
+}
+.wsa-workshop-scenes .wsa-btn > svg { grid-row: 1 / span 2; align-self: center; }
+.wsa-workshop-scenes .wsa-btn > span {
+    grid-column: 2;
+    grid-row: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.wsa-workshop-scenes .wsa-btn > .wsa-scene-state-badge {
+    grid-column: 3;
+    grid-row: 1;
+    justify-self: end;
+    white-space: nowrap;
+}
+.wsa-workshop-scenes .wsa-btn > small:not(.wsa-scene-state-badge) {
+    grid-column: 2 / span 2;
+    grid-row: 2;
+    color: var(--text-muted);
+    font-size: .7rem;
+    line-height: 1.25;
+}
 .wsa-scene-card { display: flex; align-items: stretch; gap: 6px; min-width: 0; }
 .wsa-scene-card .wsa-btn { flex: 1; min-width: 0; }
-.wsa-scene-card .wsa-card-menu-btn { flex-shrink: 0; }
+.wsa-scene-card .wsa-card-menu-btn { flex-shrink: 0; align-self: center; }
 .wsa-workshop-empty { text-align: center; }
 .wsa-workshop-empty h2 { justify-content: center; }
 .wsa-workshop-loading { display: flex; align-items: center; justify-content: center; gap: 12px; min-height: 120px; }
@@ -929,4 +963,73 @@
     .wsa-docs-grid { grid-template-columns: 1fr; }
     .wsa-doc-wide { grid-column: 1; }
     .wsa-doc-card ol, .wsa-doc-features { grid-template-columns: 1fr; }
+}
+
+/* ---------------------------------------------------------------------------
+   Aviso de NOPAL Intelligence en el editor de escenas
+   ---------------------------------------------------------------------------
+   Solo se pinta cuando la IA NO está activada (state.aiAvailable === false):
+   es una invitación discreta, no un bloqueo -- el editor de escenas funciona
+   igual sin ella. Usa el acento del tema, como el resto del plugin, para que
+   se lea como parte de NOPAL y no como un anuncio pegado.
+*/
+.wsa-ai-hint {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin: 2px 0 10px;
+    padding: 11px 13px;
+    border: 1px solid rgba(var(--wsa-accent-rgb), .35);
+    border-radius: 12px;
+    background: rgba(var(--wsa-accent-rgb), .09);
+}
+
+.wsa-ai-hint-body {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    flex: 1 1 220px;
+    min-width: 0;
+}
+
+.wsa-ai-hint-body strong {
+    font-size: .84rem;
+    color: var(--wsa-accent);
+}
+
+.wsa-ai-hint-body small {
+    font-size: .76rem;
+    line-height: 1.4;
+    color: var(--text-muted);
+}
+
+.wsa-ai-hint .wsa-btn {
+    flex: 0 0 auto;
+    text-decoration: none;
+}
+
+/* ---------------------------------------------------------------------------
+   Modal "Todas las escenas"
+   ---------------------------------------------------------------------------
+   Reutiliza .wsa-manageboards-dialog (560px), pensado para una lista vertical
+   de placas -- pero adentro va la rejilla de escenas a 3 columnas, que a ese
+   ancho deja cada tarjeta en ~170px y encima obliga a truncar el nombre. Se
+   le da su propio ancho y se deja que la rejilla se acomode sola según quepa.
+*/
+#wsa-allscenes-panel .wsa-manageboards-dialog {
+    width: min(760px, 94vw);
+}
+
+#wsa-allscenes-panel .wsa-workshop-scenes {
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+}
+
+/* La lista puede crecer más que la ventana (el diálogo ya tiene max-height:
+   80vh y overflow oculto) -- sin esto las escenas de más quedan cortadas y
+   sin forma de llegar a ellas. */
+#wsa-allscenes-list {
+    overflow-y: auto;
+    max-height: calc(80vh - 150px);
+    padding: 0 2px 2px;
 }

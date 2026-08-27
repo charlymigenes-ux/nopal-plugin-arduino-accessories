@@ -116,7 +116,11 @@ bool handleBuzzerCommand(const String& command, String& response);
 void handleCommand(String line);
 
 #define FW_VERSION "4.5.0-ff"
-#define NOPAL_PROTOCOL 4
+// 5: efectos animados por segmento (serviceLeds). El backend lo usa para
+// saber si puede mandar "effect": el firmware 4 IGNORA ese parametro y pinta
+// un color plano contestando OK, asi que sin este numero la degradacion seria
+// silenciosa y nadie se enteraria de que la animacion no existe.
+#define NOPAL_PROTOCOL 5
 
 #ifndef NOPAL_RELAY_ACTIVE_LOW
   #define NOPAL_RELAY_ACTIVE_LOW 1
@@ -1465,14 +1469,286 @@ void setPwmLedColor(uint8_t red, uint8_t green, uint8_t blue) {
 #endif
 }
 
+// ── Efectos animados de tira ─────────────────────────────────────────────
+// El servidor deja de mandar fotogramas y pasa a mandar INTENCIONES: elige un
+// efecto y sus parametros, y la placa lo renderiza sola. Animar desde el
+// servidor exigia una peticion HTTP por fotograma -- inviable por WiFi -- y
+// por eso la unica animacion que existia (playStartupAnimation) bloqueaba la
+// placa entera con delay().
+//
+// Se renderiza dentro del loop() cooperativo, igual que serviceNetwork() y
+// serviceBuzzer(): sin delay(), saliendo enseguida si todavia no toca
+// fotograma. Nunca desde un manejador HTTP -- show() desactiva interrupciones
+// mientras transmite y ahi la placa esta sorda.
+//
+// POR SEGMENTO Y VARIOS A LA VEZ, y esto es lo que manda el diseño: en el
+// taller un mismo aro de 16 LEDs esta repartido entre cuatro maquinas, cuatro
+// LEDs cada una (ver machine_led_rules.json). Un efecto que pintara la tira
+// entera borraria los otros tres segmentos. Por eso hay ranuras: cada una
+// anima su ventana [start, start+count) y el tick las compone todas antes de
+// un unico show() por tira.
+
+#if defined(ESP8266)
+  // La ESP8266 comparte el unico nucleo con la pila WiFi: 25 fps le deja aire.
+  #define LED_FRAME_MS 40
+#else
+  #define LED_FRAME_MS 20   // 50 fps
+#endif
+
+#define LED_STRIP_SLOTS 3   // tiras fisicas soportadas
+#define LED_FX_SLOTS    8   // efectos simultaneos: 4 maquinas del aro + margen
+
+enum LedEffectKind : uint8_t {
+  LED_FX_NONE = 0,
+  LED_FX_BREATHE,   // fundido suave: reposo
+  LED_FX_COMET,     // cabeza con estela: trabajo avanzando
+  LED_FX_THERMO,    // azul->rojo por temperatura: calentando/enfriando
+  LED_FX_SWEEP,     // arcoiris en marcha: trabajo sin porcentaje
+  LED_FX_ALARM,     // latido doble: exige atencion
+  LED_FX_FILL       // llenado por porcentaje: progreso conocido
+};
+
+struct LedEffectState {
+  LedEffectKind kind;
+  uint8_t  strip;       // a que tira pertenece la ventana
+  uint16_t start;       // primer pixel de la ventana
+  uint16_t count;       // cuantos pixeles ocupa
+  uint8_t  red;
+  uint8_t  green;
+  uint8_t  blue;
+  uint8_t  speed;       // 1..255, cuanto avanza la fase por fotograma
+  uint8_t  floorLevel;  // suelo del fundido: 0 se apaga del todo en el valle
+  uint8_t  progress;    // 0..100, solo para THERMO y FILL
+  uint16_t hue;         // 0..65535, tono base de SWEEP
+  uint16_t phase;       // envuelve sola a 65536, sin condicion especial
+};
+
+LedEffectState ledEffect[LED_FX_SLOTS];
+uint32_t ledStripLastFrameMs[LED_STRIP_SLOTS];
+
+// Dos ventanas se pisan si comparten aunque sea un pixel.
+bool ledRangesOverlap(uint16_t aStart, uint16_t aCount, uint16_t bStart, uint16_t bCount) {
+  return aStart < (uint16_t)(bStart + bCount) && bStart < (uint16_t)(aStart + aCount);
+}
+
+// Libera las ranuras que se pisan con la ventana dada. Se llama tanto al
+// arrancar un efecto nuevo como cuando alguien pinta un color fijo ahi: si no,
+// los dos escribirian el mismo pixel y ganaria el ultimo, de forma
+// impredecible entre fotogramas.
+void ledEffectStopRange(uint8_t stripIndex, uint16_t start, uint16_t count) {
+  for (uint8_t i = 0; i < LED_FX_SLOTS; i++) {
+    LedEffectState& fx = ledEffect[i];
+    if (fx.kind == LED_FX_NONE || fx.strip != stripIndex) continue;
+    if (ledRangesOverlap(fx.start, fx.count, start, count)) fx.kind = LED_FX_NONE;
+  }
+}
+
+void ledEffectStopStrip(uint8_t stripIndex) {
+  for (uint8_t i = 0; i < LED_FX_SLOTS; i++) {
+    if (ledEffect[i].strip == stripIndex) ledEffect[i].kind = LED_FX_NONE;
+  }
+}
+
+// Devuelve la ranura que ya anima esa ventana exacta (para no acumular una
+// nueva en cada actualizacion de estado), o la primera libre.
+int8_t ledEffectSlotFor(uint8_t stripIndex, uint16_t start, uint16_t count) {
+  for (uint8_t i = 0; i < LED_FX_SLOTS; i++) {
+    LedEffectState& fx = ledEffect[i];
+    if (fx.kind != LED_FX_NONE && fx.strip == stripIndex && fx.start == start && fx.count == count) return i;
+  }
+  for (uint8_t i = 0; i < LED_FX_SLOTS; i++) {
+    if (ledEffect[i].kind == LED_FX_NONE) return i;
+  }
+  return -1;
+}
+
+bool ledEffectStart(
+  uint8_t stripIndex, uint16_t start, uint16_t count, LedEffectKind kind,
+  uint8_t red, uint8_t green, uint8_t blue,
+  uint8_t speed, uint8_t floorLevel, uint8_t progress, uint16_t hue
+) {
+  if (stripIndex >= LED_STRIP_SLOTS || count == 0) return false;
+  ledEffectStopRange(stripIndex, start, count);
+  const int8_t slot = ledEffectSlotFor(stripIndex, start, count);
+  if (slot < 0) return false;
+  LedEffectState& fx = ledEffect[slot];
+  fx.kind = kind;
+  fx.strip = stripIndex;
+  fx.start = start;
+  fx.count = count;
+  fx.red = red; fx.green = green; fx.blue = blue;
+  fx.speed = speed == 0 ? 1 : speed;
+  fx.floorLevel = floorLevel;
+  fx.progress = progress > 100 ? 100 : progress;
+  fx.hue = hue;
+  fx.phase = 0;
+  return true;
+}
+
+// Escala un color por un nivel 0..255 y lo corrige gamma. Todos los efectos
+// terminan pasando por aqui, asi que el fundido se ve parejo en todos.
+uint32_t ledScaled(Adafruit_NeoPixel* strip, uint8_t red, uint8_t green, uint8_t blue, uint8_t level) {
+  return Adafruit_NeoPixel::gamma32(strip->Color(
+    (uint8_t)(((uint16_t)red   * level) / 255),
+    (uint8_t)(((uint16_t)green * level) / 255),
+    (uint8_t)(((uint16_t)blue  * level) / 255)
+  ));
+}
+
+// Escribe un pixel de la ventana, traduciendo indice local a indice de tira.
+inline void ledPut(Adafruit_NeoPixel* strip, LedEffectState& fx, uint16_t local, uint32_t color) {
+  strip->setPixelColor(fx.start + local, color);
+}
+
+// sine8() es una tabla de 256 entradas: seno sin coma flotante ni divisiones
+// caras. El nivel resultante escala el color, y el resultado pasa por gamma
+// para que el fundido suba parejo al ojo en vez de dispararse al principio.
+void renderBreathe(Adafruit_NeoPixel* strip, LedEffectState& fx) {
+  const uint8_t wave = Adafruit_NeoPixel::sine8(fx.phase >> 8);
+  const uint16_t span = 255 - fx.floorLevel;
+  const uint8_t level = fx.floorLevel + (uint8_t)(((uint16_t)wave * span) / 255);
+  const uint32_t color = ledScaled(strip, fx.red, fx.green, fx.blue, level);
+  for (uint16_t i = 0; i < fx.count; i++) ledPut(strip, fx, i, color);
+}
+
+// Cabeza luminosa con estela que se apaga hacia atras. La fase de 16 bits se
+// reparte entre los pixeles de la VENTANA, asi que el avance es suave aunque
+// el segmento tenga 4 LEDs: la cabeza no salta, se desplaza.
+void renderComet(Adafruit_NeoPixel* strip, LedEffectState& fx) {
+  const uint16_t count = fx.count;
+  const uint16_t head = (uint16_t)(((uint32_t)fx.phase * count) >> 16);
+  const uint16_t tail = count / 3 < 2 ? 2 : count / 3;
+  for (uint16_t i = 0; i < count; i++) {
+    const uint16_t back = (head >= i) ? (uint16_t)(head - i) : (uint16_t)(count + head - i);
+    const uint8_t level = back < tail ? (uint8_t)(255 - ((uint32_t)back * 255 / tail)) : 0;
+    ledPut(strip, fx, i, ledScaled(strip, fx.red, fx.green, fx.blue, level));
+  }
+}
+
+// Termometro de verdad, no las 4 bandas de antes: el tono recorre la rueda de
+// azul (43690) a rojo (0) a lo largo de la ventana, y "progress" decide hasta
+// donde llega el llenado. El color ES la temperatura, sin escalones.
+void renderThermo(Adafruit_NeoPixel* strip, LedEffectState& fx) {
+  const uint16_t count = fx.count;
+  const uint16_t filled = (uint16_t)((uint32_t)count * fx.progress / 100);
+  for (uint16_t i = 0; i < count; i++) {
+    if (i >= filled) { ledPut(strip, fx, i, 0); continue; }
+    const uint16_t hue = count > 1
+      ? (uint16_t)(43690UL - (43690UL * i) / (count - 1))
+      : 0;
+    ledPut(strip, fx, i, Adafruit_NeoPixel::gamma32(
+      Adafruit_NeoPixel::ColorHSV(hue, 255, 255)));
+  }
+}
+
+// Arcoiris en marcha: cada pixel va un trozo de rueda por detras del
+// anterior, y el conjunto entero gira. Con hue de 16 bits no hay bandas.
+void renderSweep(Adafruit_NeoPixel* strip, LedEffectState& fx) {
+  const uint16_t step = (uint16_t)(65535UL / (fx.count == 0 ? 1 : fx.count));
+  for (uint16_t i = 0; i < fx.count; i++) {
+    const uint16_t hue = (uint16_t)(fx.hue + fx.phase + (uint16_t)(i * step));
+    ledPut(strip, fx, i, Adafruit_NeoPixel::gamma32(
+      Adafruit_NeoPixel::ColorHSV(hue, 255, 255)));
+  }
+}
+
+// Latido doble -- dos pulsos rapidos y una pausa, como un corazon. Usa la
+// misma tabla de seno que la respiracion pero se lee completamente distinto,
+// que es justo lo que hace falta para que una alarma no se confunda de reojo
+// con "trabajando".
+void renderAlarm(Adafruit_NeoPixel* strip, LedEffectState& fx) {
+  const uint8_t t = (uint8_t)(fx.phase >> 8);
+  uint8_t level = 0;
+  if (t < 60)       level = Adafruit_NeoPixel::sine8((uint8_t)(t * 4));
+  else if (t < 120) level = Adafruit_NeoPixel::sine8((uint8_t)((t - 60) * 4));
+  const uint32_t color = ledScaled(strip, fx.red, fx.green, fx.blue, level);
+  for (uint16_t i = 0; i < fx.count; i++) ledPut(strip, fx, i, color);
+}
+
+// Llenado plano por porcentaje, para progreso conocido. El resto apagado.
+void renderFill(Adafruit_NeoPixel* strip, LedEffectState& fx) {
+  const uint16_t filled = (uint16_t)((uint32_t)fx.count * fx.progress / 100);
+  const uint32_t on = ledScaled(strip, fx.red, fx.green, fx.blue, 255);
+  for (uint16_t i = 0; i < fx.count; i++) ledPut(strip, fx, i, i < filled ? on : 0);
+}
+
+void serviceLeds() {
+#if WS2812_ENABLE
+  const uint32_t now = millis();
+
+  // Un reloj por TIRA, no por ranura: todas las ventanas de una misma tira se
+  // componen en el mismo fotograma y se mandan con un unico show(). Asi el
+  // coste de transmision no se multiplica por el numero de maquinas.
+  for (uint8_t stripIndex = 0; stripIndex < LED_STRIP_SLOTS; stripIndex++) {
+    if (!ws2812StripEnabled(stripIndex)) continue;
+    if (now - ledStripLastFrameMs[stripIndex] < LED_FRAME_MS) continue;
+
+    bool painted = false;
+    Adafruit_NeoPixel* strip = ws2812StripObject(stripIndex);
+    if (strip == NULL) continue;
+    const uint16_t stripCount = ws2812StripCount(stripIndex);
+
+    for (uint8_t i = 0; i < LED_FX_SLOTS; i++) {
+      LedEffectState& fx = ledEffect[i];
+      if (fx.kind == LED_FX_NONE || fx.strip != stripIndex) continue;
+      if (fx.start + fx.count > stripCount) { fx.kind = LED_FX_NONE; continue; }
+
+      fx.phase += (uint16_t)fx.speed * 16;
+      switch (fx.kind) {
+        case LED_FX_BREATHE: renderBreathe(strip, fx); break;
+        case LED_FX_COMET:   renderComet(strip, fx);   break;
+        case LED_FX_THERMO:  renderThermo(strip, fx);  break;
+        case LED_FX_SWEEP:   renderSweep(strip, fx);   break;
+        case LED_FX_ALARM:   renderAlarm(strip, fx);   break;
+        case LED_FX_FILL:    renderFill(strip, fx);    break;
+        default: break;
+      }
+      painted = true;
+    }
+
+    if (painted) {
+      ledStripLastFrameMs[stripIndex] = now;
+      strip->show();
+    }
+  }
+#endif
+}
+
+// ── Corrección gamma de las tiras ────────────────────────────────────────
+// El ojo no percibe la luz de forma lineal: sin corregir, un fundido sube de
+// golpe al principio y luego casi no cambia, y un color a media potencia se ve
+// casi tan brillante como a tope. gamma32() (tabla 2.6 de Adafruit_NeoPixel,
+// sin coma flotante ni coste en tiempo real) reparte el cambio de forma pareja
+// para el ojo.
+//
+// Los extremos NO se mueven: 0 sigue apagado y 255 sigue a plena potencia. Lo
+// que baja son los medios, y eso SE NOTA -- un color intermedio se verá más
+// oscuro que antes de este cambio. Es lo correcto, pero si alguna escena
+// quedara demasiado apagada se desactiva por unidad desde su secrets.h con:
+//   #define NOPAL_LED_GAMMA 0
+#ifndef NOPAL_LED_GAMMA
+  #define NOPAL_LED_GAMMA 1
+#endif
+
+inline uint32_t ws2812Color(Adafruit_NeoPixel* strip, uint8_t red, uint8_t green, uint8_t blue) {
+#if NOPAL_LED_GAMMA
+  return Adafruit_NeoPixel::gamma32(strip->Color(red, green, blue));
+#else
+  return strip->Color(red, green, blue);
+#endif
+}
+
 void setWs2812ColorAt(uint8_t stripIndex, uint8_t red, uint8_t green, uint8_t blue) {
 
 #if WS2812_ENABLE
 
   if (!ws2812StripEnabled(stripIndex)) return;
 
+  // Pintar la tira entera de un color fijo cancela TODOS sus efectos.
+  ledEffectStopStrip(stripIndex);
+
   Adafruit_NeoPixel* target = ws2812StripObject(stripIndex);
-  target->fill(target->Color(red, green, blue));
+  target->fill(ws2812Color(target, red, green, blue));
   target->show();
 
 #endif
@@ -1504,13 +1780,19 @@ bool setWs2812SegmentAt(
     response = "ERR:UNSUPPORTED";
     return true;
   }
+
+
   const uint16_t stripCount = ws2812StripCount(stripIndex);
   if (start < 0 || count < 1 || start + count > stripCount) {
     response = "ERR:INVALID_SEGMENT";
     return true;
   }
+  // Solo se cancelan los efectos que se pisan con ESTE tramo: las otras
+  // maquinas que animan su propia ventana del mismo aro siguen intactas.
+  ledEffectStopRange(stripIndex, (uint16_t)start, (uint16_t)count);
+
   Adafruit_NeoPixel* target = ws2812StripObject(stripIndex);
-  const uint32_t color = target->Color(red, green, blue);
+  const uint32_t color = ws2812Color(target, red, green, blue);
   for (int pixel = start; pixel < start + count; pixel++) {
     target->setPixelColor(pixel, color);
   }
@@ -2295,7 +2577,48 @@ void setupWebServer() {
       const int stripArg = server.hasArg("strip") ? server.arg("strip").toInt() : 0;
       const uint8_t stripIndex = (stripArg == 1 || stripArg == 2) ? stripArg : 0;
 
-      if (server.hasArg("start") || server.hasArg("count")) {
+      if (server.hasArg("effect")) {
+        // La ventana por defecto es la tira entera; con start/count se acota
+        // a un segmento, que es como la usa machine_led_automation.
+        const uint16_t fxStart = server.hasArg("start") ? (uint16_t)server.arg("start").toInt() : 0;
+        const uint16_t fxCount = server.hasArg("count")
+          ? (uint16_t)server.arg("count").toInt()
+          : ws2812StripCount(stripIndex);
+        // Intencion, no fotograma: se guarda el efecto y serviceLeds() lo
+        // renderiza. "off" devuelve la tira al control manual.
+        const String effect = server.arg("effect");
+        if (effect == "off") {
+          ledEffectStopRange(stripIndex, fxStart, fxCount);
+          String discard;
+          setWs2812SegmentAt(stripIndex, (int)fxStart, (int)fxCount, 0, 0, 0, discard);
+          response = "OK";
+        } else {
+          // Resto del catalogo: mismo arrancador, distinto kind.
+          LedEffectKind kind = LED_FX_NONE;
+          if (effect == "breathe")     kind = LED_FX_BREATHE;
+          else if (effect == "comet")  kind = LED_FX_COMET;
+          else if (effect == "thermo") kind = LED_FX_THERMO;
+          else if (effect == "sweep")  kind = LED_FX_SWEEP;
+          else if (effect == "alarm")  kind = LED_FX_ALARM;
+          else if (effect == "fill")   kind = LED_FX_FILL;
+
+          if (kind == LED_FX_NONE) {
+            response = "ERR:UNKNOWN_EFFECT";
+          } else {
+            const bool ok = ledEffectStart(
+              stripIndex, fxStart, fxCount, kind,
+              (uint8_t)server.arg("r").toInt(),
+              (uint8_t)server.arg("g").toInt(),
+              (uint8_t)server.arg("b").toInt(),
+              server.hasArg("speed") ? (uint8_t)server.arg("speed").toInt() : 8,
+              server.hasArg("floor") ? (uint8_t)server.arg("floor").toInt() : 0,
+              server.hasArg("progress") ? (uint8_t)server.arg("progress").toInt() : 100,
+              server.hasArg("hue") ? (uint16_t)server.arg("hue").toInt() : 0
+            );
+            response = ok ? "OK" : "ERR:NO_FX_SLOT";
+          }
+        }
+      } else if (server.hasArg("start") || server.hasArg("count")) {
         const String command = String("WSSEG:") + server.arg("start") + "," + server.arg("count") + "," +
           server.arg("r") + "," + server.arg("g") + "," + server.arg("b");
         parseAndSetSegment(command, 6, response, stripIndex);
@@ -2927,6 +3250,8 @@ void loop() {
   serviceNetwork();
 
   serviceBuzzer();
+
+  serviceLeds();
 
   while (Serial.available() > 0) {
 

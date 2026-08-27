@@ -816,6 +816,29 @@ def get_accessories() -> List[Dict[str, Any]]:
     return [_public(e) for e in _load_registry()]
 
 
+# Cómo se reconoce al accesorio que extrae el humo. El registro no tiene un
+# campo de "rol" y agregarlo pediría UI nueva, así que se identifica por
+# nombre -- que es lo único que el usuario ya controla desde el panel.
+# Consecuencia a tener presente: si el accesorio se renombra a algo que no
+# contenga esta palabra, el aviso deja de emitirse en silencio.
+EXTRACTION_NAME_HINT = "extractor"
+
+
+def get_extraction_accessories(status: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Filtra los accesorios de extracción de una lista YA obtenida con
+    get_accessories_status(). Recibe la lista en vez de pedirla de nuevo a
+    propósito: get_accessories_status() consulta por HTTP a cada placa, y el
+    único llamador (las notificaciones del core) ya la tiene en la mano --
+    volver a pedirla duplicaría ese costo en cada consulta del badge.
+
+    Qué accesorio es el extractor es una decisión de hardware, y el hardware
+    es del plugin: el core sabe si un láser está trabajando, pero no debe
+    saber que "Extractor" vive en un relé de la .84. Mismo reparto que
+    machine_led_automation."""
+    hint = EXTRACTION_NAME_HINT
+    return [a for a in status if hint in (a.get("name") or "").lower()]
+
+
 def get_accessory_connection(accessory_id: str) -> Optional[Dict[str, Any]]:
     """Config de conexión SIN redactar (ip/device/credenciales OTA reales)
     de un accesorio -- solo para uso interno del servidor (ej. flashear
@@ -936,6 +959,90 @@ async def set_accessory_led_color(accessory_id: str, red: int, green: int, blue:
         _save_registry(entries)
         log_event(entry["id"], entry["name"], "led_color", {"color": [red, green, blue]})
     return ok
+
+
+def _refresh_stored_protocol(accessory_id: str, config: Dict[str, Any]) -> int:
+    """Sondea la placa y persiste su protocolo si resultó ser mayor que el
+    guardado.
+
+    El protocolo del registro es el del momento del ALTA. Tras flashear, una
+    placa puede saber hacer cosas nuevas mientras el registro sigue diciendo
+    que no, y el efecto es de los peores: todo contesta OK y nada pasa.
+    get_led_targets() ya refrescaba este dato en vivo, pero solo para
+    pintarlo en el configurador -- quien decide si se puede animar lee el
+    guardado, así que la mejora no llegaba nunca.
+
+    Se comprueba UNA vez, cuando el guardado se queda corto; en cuanto se
+    persiste, deja de costar sondeos.
+    """
+    ip = str(config.get("ip") or "")
+    if not ip:
+        return int(config.get("protocol") or 0)
+    live = probe_wifi_board(ip, "", "")
+    live_protocol = int((live or {}).get("protocol") or 0)
+    if live_protocol <= int(config.get("protocol") or 0):
+        return int(config.get("protocol") or 0)
+
+    entries = _load_registry()
+    for entry in entries:
+        if entry.get("id") == accessory_id:
+            entry.setdefault("config", {})["protocol"] = live_protocol
+            entry["config"]["segment_capable"] = bool(
+                entry["config"].get("segment_capable") or live_protocol >= 4
+            )
+            break
+    _save_registry(entries)
+    config["protocol"] = live_protocol
+    return live_protocol
+
+
+async def set_accessory_led_effect(
+    accessory_id: str, effect: str, start: int, count: int, **params: Any
+) -> Optional[bool]:
+    """Arranca un efecto animado en una ventana de la tira, o lo detiene con
+    ``effect="off"``.
+
+    La diferencia de fondo con set_accessory_led_segment: aquí NO se manda un
+    color por fotograma. Se manda la intención UNA vez y la placa la renderiza
+    sola (ver serviceLeds() en el firmware), así que una animación no cuesta
+    tráfico mientras dura. Animar desde acá exigiría una petición por
+    fotograma, que es justo lo que hacía imposible tener animaciones.
+
+    Devuelve None -- no False -- cuando el accesorio no puede animar, para que
+    quien llame distinga "no soportado" (y caiga al camino de color plano) de
+    "lo intenté y falló". Requiere protocolo 5: el firmware 4 ignora el
+    parámetro y contesta OK pintando un color fijo, o sea que sin esta
+    comprobación la animación fallaría en silencio.
+
+    Solo por WiFi: el camino serie no tiene comando de efecto todavía.
+    """
+    entry = next((e for e in _load_registry() if e.get("id") == accessory_id), None)
+    if entry is None or entry.get("driver") != "arduino":
+        return None
+    config = entry.get("config") or {}
+    if config.get("led_mode") != "ws2812" or config.get("transport") != "wifi":
+        return None
+    if int(config.get("protocol") or 0) < 5:
+        loop = asyncio.get_event_loop()
+        refreshed = await loop.run_in_executor(
+            None, lambda: _refresh_stored_protocol(accessory_id, config)
+        )
+        if refreshed < 5:
+            return None
+
+    payload: Dict[str, Any] = {
+        "mode": "ws2812",
+        "effect": effect,
+        "start": int(start),
+        "count": int(count),
+    }
+    payload.update({k: int(v) for k, v in params.items() if v is not None})
+
+    loop = asyncio.get_event_loop()
+    response = await loop.run_in_executor(
+        None, lambda: _arduino_http_request(config, "POST", "/api/led", payload)
+    )
+    return response == "OK"
 
 
 async def set_accessory_led_segment(

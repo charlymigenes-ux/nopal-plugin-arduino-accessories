@@ -42,6 +42,22 @@ HEAT_GRADIENT_STOPS = [
     (255, 0, 0),      # rojo -- a temperatura objetivo
 ]
 
+# Qué efecto anima cada estado. Sustituye a pintar un color plano: el firmware
+# (protocolo 5) anima solo, así que esto se manda una vez por cambio de estado
+# y deja de costar tráfico.
+#
+# "completed" y "offline" NO están aquí a propósito: uno celebra y el otro
+# apaga, y ninguno gana nada moviéndose. Siguen por el camino de color fijo,
+# igual que cualquier placa con firmware viejo.
+STATE_EFFECTS: Dict[str, Dict[str, Any]] = {
+    "idle":     {"effect": "breathe", "speed": 3,  "floor": 10},
+    "heating":  {"effect": "thermo"},
+    "cooling":  {"effect": "thermo"},
+    "printing": {"effect": "comet",   "speed": 10},
+    "paused":   {"effect": "breathe", "speed": 12, "floor": 40},
+    "error":    {"effect": "alarm",   "speed": 14},
+}
+
 _lock = Lock()
 _last_applied_state: Dict[str, Any] = {}
 
@@ -267,6 +283,37 @@ async def apply_state(
     # al hardware -- por eso se devuelve siempre, deduplicación aparte.
     if _last_applied_state.get(key) == dedup_value:
         return {"applied": False, "reason": "unchanged", **render_info}
+
+    # Camino animado. set_accessory_led_effect() devuelve None si la placa no
+    # puede animar (firmware viejo, tira por serie...), y entonces se cae al
+    # bucle de tramos de abajo sin ruido: la automatización sigue funcionando
+    # como siempre, solo que sin movimiento.
+    spec = STATE_EFFECTS.get(state)
+    if spec is not None and config["count"] > 0:
+        fx_params = dict(spec)
+        fx_name = fx_params.pop("effect")
+        if fx_name == "thermo":
+            fx_params["progress"] = max(0, min(100, progress or 0))
+        else:
+            fx_color = config["colors"].get(state, DEFAULT_COLORS[state])
+            fx_params["r"], fx_params["g"], fx_params["b"] = fx_color
+        fx_ok = await accessory_service.set_accessory_led_effect(
+            config["accessory_id"], fx_name, config["start"], config["count"], **fx_params
+        )
+        if fx_ok is not None:
+            if fx_ok:
+                _last_applied_state[key] = dedup_value
+                log_event(
+                    config["accessory_id"], config.get("machine_name", machine_id),
+                    "machine_led_state",
+                    {"machine": key, "state": state, "progress": progress, "effect": fx_name},
+                )
+            return {
+                "applied": bool(fx_ok),
+                "reason": None if fx_ok else "hardware_error",
+                "effect": fx_name,
+                **render_info,
+            }
 
     result = True
     for run in runs:
